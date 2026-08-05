@@ -12,6 +12,9 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as AppDashboardRouteImport } from './routes/_app.dashboard'
+import { Route as AppCustomersIndexRouteImport } from './routes/_app.customers.index'
+import { Route as AppCustomersCustomerIdRouteImport } from './routes/_app.customers.$customerId'
+import { Route as AppCustomersNewRouteImport } from './routes/_app.customers.new'
 import { Route as AppInventoryIndexRouteImport } from './routes/_app.inventory.index'
 import { Route as AppInventoryEquipmentIdRouteImport } from './routes/_app.inventory.$equipmentId'
 import { Route as AppInventoryNewRouteImport } from './routes/_app.inventory.new'
@@ -28,6 +31,21 @@ const AppRoute = AppRouteImport.update({
 const AppDashboardRoute = AppDashboardRouteImport.update({
   id: '/dashboard',
   path: '/dashboard',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppCustomersIndexRoute = AppCustomersIndexRouteImport.update({
+  id: '/customers/',
+  path: '/customers/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppCustomersCustomerIdRoute = AppCustomersCustomerIdRouteImport.update({
+  id: '/customers/$customerId',
+  path: '/customers/$customerId',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppCustomersNewRoute = AppCustomersNewRouteImport.update({
+  id: '/customers/new',
+  path: '/customers/new',
   getParentRoute: () => AppRoute,
 } as any)
 const AppInventoryIndexRoute = AppInventoryIndexRouteImport.update({
@@ -49,15 +67,21 @@ const AppInventoryNewRoute = AppInventoryNewRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/dashboard': typeof AppDashboardRoute
+  '/customers/$customerId': typeof AppCustomersCustomerIdRoute
+  '/customers/new': typeof AppCustomersNewRoute
   '/inventory/$equipmentId': typeof AppInventoryEquipmentIdRoute
   '/inventory/new': typeof AppInventoryNewRoute
+  '/customers/': typeof AppCustomersIndexRoute
   '/inventory/': typeof AppInventoryIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/dashboard': typeof AppDashboardRoute
+  '/customers/$customerId': typeof AppCustomersCustomerIdRoute
+  '/customers/new': typeof AppCustomersNewRoute
   '/inventory/$equipmentId': typeof AppInventoryEquipmentIdRoute
   '/inventory/new': typeof AppInventoryNewRoute
+  '/customers': typeof AppCustomersIndexRoute
   '/inventory': typeof AppInventoryIndexRoute
 }
 export interface FileRoutesById {
@@ -65,8 +89,11 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/_app': typeof AppRouteWithChildren
   '/_app/dashboard': typeof AppDashboardRoute
+  '/_app/customers/$customerId': typeof AppCustomersCustomerIdRoute
+  '/_app/customers/new': typeof AppCustomersNewRoute
   '/_app/inventory/$equipmentId': typeof AppInventoryEquipmentIdRoute
   '/_app/inventory/new': typeof AppInventoryNewRoute
+  '/_app/customers/': typeof AppCustomersIndexRoute
   '/_app/inventory/': typeof AppInventoryIndexRoute
 }
 export interface FileRouteTypes {
@@ -74,23 +101,32 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/dashboard'
+    | '/customers/$customerId'
+    | '/customers/new'
     | '/inventory/$equipmentId'
     | '/inventory/new'
+    | '/customers/'
     | '/inventory/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/dashboard'
+    | '/customers/$customerId'
+    | '/customers/new'
     | '/inventory/$equipmentId'
     | '/inventory/new'
+    | '/customers'
     | '/inventory'
   id:
     | '__root__'
     | '/'
     | '/_app'
     | '/_app/dashboard'
+    | '/_app/customers/$customerId'
+    | '/_app/customers/new'
     | '/_app/inventory/$equipmentId'
     | '/_app/inventory/new'
+    | '/_app/customers/'
     | '/_app/inventory/'
   fileRoutesById: FileRoutesById
 }
@@ -122,6 +158,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppDashboardRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/customers/': {
+      id: '/_app/customers/'
+      path: '/customers'
+      fullPath: '/customers/'
+      preLoaderRoute: typeof AppCustomersIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/customers/$customerId': {
+      id: '/_app/customers/$customerId'
+      path: '/customers/$customerId'
+      fullPath: '/customers/$customerId'
+      preLoaderRoute: typeof AppCustomersCustomerIdRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/customers/new': {
+      id: '/_app/customers/new'
+      path: '/customers/new'
+      fullPath: '/customers/new'
+      preLoaderRoute: typeof AppCustomersNewRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/inventory/': {
       id: '/_app/inventory/'
       path: '/inventory'
@@ -148,15 +205,21 @@ declare module '@tanstack/react-router' {
 
 interface AppRouteChildren {
   AppDashboardRoute: typeof AppDashboardRoute
+  AppCustomersCustomerIdRoute: typeof AppCustomersCustomerIdRoute
+  AppCustomersNewRoute: typeof AppCustomersNewRoute
   AppInventoryEquipmentIdRoute: typeof AppInventoryEquipmentIdRoute
   AppInventoryNewRoute: typeof AppInventoryNewRoute
+  AppCustomersIndexRoute: typeof AppCustomersIndexRoute
   AppInventoryIndexRoute: typeof AppInventoryIndexRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
   AppDashboardRoute: AppDashboardRoute,
+  AppCustomersCustomerIdRoute: AppCustomersCustomerIdRoute,
+  AppCustomersNewRoute: AppCustomersNewRoute,
   AppInventoryEquipmentIdRoute: AppInventoryEquipmentIdRoute,
   AppInventoryNewRoute: AppInventoryNewRoute,
+  AppCustomersIndexRoute: AppCustomersIndexRoute,
   AppInventoryIndexRoute: AppInventoryIndexRoute,
 }
 

@@ -30,7 +30,6 @@ import { StatCard } from "@/components/shared/stat-card";
 import { StatusBadge, type Tone } from "@/components/shared/status-badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
 import {
   Table,

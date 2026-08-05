@@ -12,6 +12,9 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as AppDashboardRouteImport } from './routes/_app.dashboard'
+import { Route as AppInventoryIndexRouteImport } from './routes/_app.inventory.index'
+import { Route as AppInventoryEquipmentIdRouteImport } from './routes/_app.inventory.$equipmentId'
+import { Route as AppInventoryNewRouteImport } from './routes/_app.inventory.new'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -27,27 +30,68 @@ const AppDashboardRoute = AppDashboardRouteImport.update({
   path: '/dashboard',
   getParentRoute: () => AppRoute,
 } as any)
+const AppInventoryIndexRoute = AppInventoryIndexRouteImport.update({
+  id: '/inventory/',
+  path: '/inventory/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppInventoryEquipmentIdRoute = AppInventoryEquipmentIdRouteImport.update({
+  id: '/inventory/$equipmentId',
+  path: '/inventory/$equipmentId',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppInventoryNewRoute = AppInventoryNewRouteImport.update({
+  id: '/inventory/new',
+  path: '/inventory/new',
+  getParentRoute: () => AppRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/dashboard': typeof AppDashboardRoute
+  '/inventory/$equipmentId': typeof AppInventoryEquipmentIdRoute
+  '/inventory/new': typeof AppInventoryNewRoute
+  '/inventory/': typeof AppInventoryIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/dashboard': typeof AppDashboardRoute
+  '/inventory/$equipmentId': typeof AppInventoryEquipmentIdRoute
+  '/inventory/new': typeof AppInventoryNewRoute
+  '/inventory': typeof AppInventoryIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/_app': typeof AppRouteWithChildren
   '/_app/dashboard': typeof AppDashboardRoute
+  '/_app/inventory/$equipmentId': typeof AppInventoryEquipmentIdRoute
+  '/_app/inventory/new': typeof AppInventoryNewRoute
+  '/_app/inventory/': typeof AppInventoryIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/dashboard'
+  fullPaths:
+    | '/'
+    | '/dashboard'
+    | '/inventory/$equipmentId'
+    | '/inventory/new'
+    | '/inventory/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/dashboard'
-  id: '__root__' | '/' | '/_app' | '/_app/dashboard'
+  to:
+    | '/'
+    | '/dashboard'
+    | '/inventory/$equipmentId'
+    | '/inventory/new'
+    | '/inventory'
+  id:
+    | '__root__'
+    | '/'
+    | '/_app'
+    | '/_app/dashboard'
+    | '/_app/inventory/$equipmentId'
+    | '/_app/inventory/new'
+    | '/_app/inventory/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -78,15 +122,42 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppDashboardRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/inventory/': {
+      id: '/_app/inventory/'
+      path: '/inventory'
+      fullPath: '/inventory/'
+      preLoaderRoute: typeof AppInventoryIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/inventory/$equipmentId': {
+      id: '/_app/inventory/$equipmentId'
+      path: '/inventory/$equipmentId'
+      fullPath: '/inventory/$equipmentId'
+      preLoaderRoute: typeof AppInventoryEquipmentIdRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/inventory/new': {
+      id: '/_app/inventory/new'
+      path: '/inventory/new'
+      fullPath: '/inventory/new'
+      preLoaderRoute: typeof AppInventoryNewRouteImport
+      parentRoute: typeof AppRoute
+    }
   }
 }
 
 interface AppRouteChildren {
   AppDashboardRoute: typeof AppDashboardRoute
+  AppInventoryEquipmentIdRoute: typeof AppInventoryEquipmentIdRoute
+  AppInventoryNewRoute: typeof AppInventoryNewRoute
+  AppInventoryIndexRoute: typeof AppInventoryIndexRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
   AppDashboardRoute: AppDashboardRoute,
+  AppInventoryEquipmentIdRoute: AppInventoryEquipmentIdRoute,
+  AppInventoryNewRoute: AppInventoryNewRoute,
+  AppInventoryIndexRoute: AppInventoryIndexRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)

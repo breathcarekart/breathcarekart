@@ -72,7 +72,7 @@ function AddEquipmentPage() {
             <Separator className="my-5" />
             <div className="grid gap-5 sm:grid-cols-2">
               <Field label="Equipment type">
-                <Select defaultValue={equipmentTypes[0]}>
+                <Select defaultValue="Oxygen Concentrator">
                   <SelectTrigger className="h-10 rounded-xl">
                     <SelectValue />
                   </SelectTrigger>

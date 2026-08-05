@@ -48,7 +48,7 @@ function CustomerProfilePage() {
   const custInvoices = invoices.filter((i) => i.customerId === customer.id);
   const initials = customer.name
     .split(" ")
-    .map((p) => p[0])
+    .map((p: string) => p[0])
     .slice(0, 2)
     .join("");
 

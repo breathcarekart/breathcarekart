@@ -167,24 +167,26 @@ function DashboardPage() {
           <div className="space-y-3">
             {(
               [
-                ["Available", available, "success"],
-                ["On rent", rented, "primary"],
-                ["In service", statusCount("service"), "warning"],
-                ["Damaged", statusCount("damaged"), "danger"],
+                ["Available", available, "bg-success"],
+                ["On rent", rented, "bg-primary"],
+                ["In service", statusCount("service"), "bg-warning"],
+                ["Damaged", statusCount("damaged"), "bg-danger"],
               ] as const
-            ).map(([label, count, tone]) => (
+            ).map(([label, count, barClass]) => (
               <div key={label} className="space-y-1.5">
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-muted-foreground">{label}</span>
                   <span className="font-medium">{count}</span>
                 </div>
-                <Progress
-                  value={(count / equipment.length) * 100}
-                  className="h-1.5"
-                  indicatorClassName={`bg-${tone}`}
-                />
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                  <div
+                    className={`h-full rounded-full transition-all duration-700 ${barClass}`}
+                    style={{ width: `${(count / equipment.length) * 100}%` }}
+                  />
+                </div>
               </div>
             ))}
+
           </div>
         </Card>
       </div>

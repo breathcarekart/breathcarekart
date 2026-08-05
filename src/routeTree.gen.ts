@@ -12,6 +12,11 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as AppDashboardRouteImport } from './routes/_app.dashboard'
+import { Route as AppProfileRouteImport } from './routes/_app.profile'
+import { Route as AppRentalsRouteImport } from './routes/_app.rentals'
+import { Route as AppReportsRouteImport } from './routes/_app.reports'
+import { Route as AppSettingsRouteImport } from './routes/_app.settings'
+import { Route as InvoicePreviewInvoiceIdRouteImport } from './routes/invoice-preview.$invoiceId'
 import { Route as AppCustomersIndexRouteImport } from './routes/_app.customers.index'
 import { Route as AppCustomersCustomerIdRouteImport } from './routes/_app.customers.$customerId'
 import { Route as AppCustomersNewRouteImport } from './routes/_app.customers.new'
@@ -35,6 +40,31 @@ const AppDashboardRoute = AppDashboardRouteImport.update({
   id: '/dashboard',
   path: '/dashboard',
   getParentRoute: () => AppRoute,
+} as any)
+const AppProfileRoute = AppProfileRouteImport.update({
+  id: '/profile',
+  path: '/profile',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppRentalsRoute = AppRentalsRouteImport.update({
+  id: '/rentals',
+  path: '/rentals',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppReportsRoute = AppReportsRouteImport.update({
+  id: '/reports',
+  path: '/reports',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppSettingsRoute = AppSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => AppRoute,
+} as any)
+const InvoicePreviewInvoiceIdRoute = InvoicePreviewInvoiceIdRouteImport.update({
+  id: '/invoice-preview/$invoiceId',
+  path: '/invoice-preview/$invoiceId',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const AppCustomersIndexRoute = AppCustomersIndexRouteImport.update({
   id: '/customers/',
@@ -85,6 +115,11 @@ const AppInvoicesNewRoute = AppInvoicesNewRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/dashboard': typeof AppDashboardRoute
+  '/profile': typeof AppProfileRoute
+  '/rentals': typeof AppRentalsRoute
+  '/reports': typeof AppReportsRoute
+  '/settings': typeof AppSettingsRoute
+  '/invoice-preview/$invoiceId': typeof InvoicePreviewInvoiceIdRoute
   '/customers/$customerId': typeof AppCustomersCustomerIdRoute
   '/customers/new': typeof AppCustomersNewRoute
   '/inventory/$equipmentId': typeof AppInventoryEquipmentIdRoute
@@ -98,6 +133,11 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/dashboard': typeof AppDashboardRoute
+  '/profile': typeof AppProfileRoute
+  '/rentals': typeof AppRentalsRoute
+  '/reports': typeof AppReportsRoute
+  '/settings': typeof AppSettingsRoute
+  '/invoice-preview/$invoiceId': typeof InvoicePreviewInvoiceIdRoute
   '/customers/$customerId': typeof AppCustomersCustomerIdRoute
   '/customers/new': typeof AppCustomersNewRoute
   '/inventory/$equipmentId': typeof AppInventoryEquipmentIdRoute
@@ -113,6 +153,11 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/_app': typeof AppRouteWithChildren
   '/_app/dashboard': typeof AppDashboardRoute
+  '/_app/profile': typeof AppProfileRoute
+  '/_app/rentals': typeof AppRentalsRoute
+  '/_app/reports': typeof AppReportsRoute
+  '/_app/settings': typeof AppSettingsRoute
+  '/invoice-preview/$invoiceId': typeof InvoicePreviewInvoiceIdRoute
   '/_app/customers/$customerId': typeof AppCustomersCustomerIdRoute
   '/_app/customers/new': typeof AppCustomersNewRoute
   '/_app/inventory/$equipmentId': typeof AppInventoryEquipmentIdRoute
@@ -128,6 +173,11 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/dashboard'
+    | '/profile'
+    | '/rentals'
+    | '/reports'
+    | '/settings'
+    | '/invoice-preview/$invoiceId'
     | '/customers/$customerId'
     | '/customers/new'
     | '/inventory/$equipmentId'
@@ -141,6 +191,11 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/dashboard'
+    | '/profile'
+    | '/rentals'
+    | '/reports'
+    | '/settings'
+    | '/invoice-preview/$invoiceId'
     | '/customers/$customerId'
     | '/customers/new'
     | '/inventory/$equipmentId'
@@ -155,6 +210,11 @@ export interface FileRouteTypes {
     | '/'
     | '/_app'
     | '/_app/dashboard'
+    | '/_app/profile'
+    | '/_app/rentals'
+    | '/_app/reports'
+    | '/_app/settings'
+    | '/invoice-preview/$invoiceId'
     | '/_app/customers/$customerId'
     | '/_app/customers/new'
     | '/_app/inventory/$equipmentId'
@@ -169,6 +229,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AppRoute: typeof AppRouteWithChildren
+  InvoicePreviewInvoiceIdRoute: typeof InvoicePreviewInvoiceIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -193,6 +254,41 @@ declare module '@tanstack/react-router' {
       fullPath: '/dashboard'
       preLoaderRoute: typeof AppDashboardRouteImport
       parentRoute: typeof AppRoute
+    }
+    '/_app/profile': {
+      id: '/_app/profile'
+      path: '/profile'
+      fullPath: '/profile'
+      preLoaderRoute: typeof AppProfileRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/rentals': {
+      id: '/_app/rentals'
+      path: '/rentals'
+      fullPath: '/rentals'
+      preLoaderRoute: typeof AppRentalsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/reports': {
+      id: '/_app/reports'
+      path: '/reports'
+      fullPath: '/reports'
+      preLoaderRoute: typeof AppReportsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/settings': {
+      id: '/_app/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof AppSettingsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/invoice-preview/$invoiceId': {
+      id: '/invoice-preview/$invoiceId'
+      path: '/invoice-preview/$invoiceId'
+      fullPath: '/invoice-preview/$invoiceId'
+      preLoaderRoute: typeof InvoicePreviewInvoiceIdRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/_app/customers/': {
       id: '/_app/customers/'
@@ -262,6 +358,10 @@ declare module '@tanstack/react-router' {
 
 interface AppRouteChildren {
   AppDashboardRoute: typeof AppDashboardRoute
+  AppProfileRoute: typeof AppProfileRoute
+  AppRentalsRoute: typeof AppRentalsRoute
+  AppReportsRoute: typeof AppReportsRoute
+  AppSettingsRoute: typeof AppSettingsRoute
   AppCustomersCustomerIdRoute: typeof AppCustomersCustomerIdRoute
   AppCustomersNewRoute: typeof AppCustomersNewRoute
   AppInventoryEquipmentIdRoute: typeof AppInventoryEquipmentIdRoute
@@ -275,6 +375,10 @@ interface AppRouteChildren {
 
 const AppRouteChildren: AppRouteChildren = {
   AppDashboardRoute: AppDashboardRoute,
+  AppProfileRoute: AppProfileRoute,
+  AppRentalsRoute: AppRentalsRoute,
+  AppReportsRoute: AppReportsRoute,
+  AppSettingsRoute: AppSettingsRoute,
   AppCustomersCustomerIdRoute: AppCustomersCustomerIdRoute,
   AppCustomersNewRoute: AppCustomersNewRoute,
   AppInventoryEquipmentIdRoute: AppInventoryEquipmentIdRoute,
@@ -291,6 +395,7 @@ const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AppRoute: AppRouteWithChildren,
+  InvoicePreviewInvoiceIdRoute: InvoicePreviewInvoiceIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

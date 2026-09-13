@@ -46,6 +46,11 @@ export type Invoice = {
   dueDate: string;
   status: InvoiceStatus;
   period: string;
+  subtotal?: number;
+  discount?: number;
+  taxRate?: number;
+  tax?: number;
+  notes?: string;
 };
 
 export type Rental = {

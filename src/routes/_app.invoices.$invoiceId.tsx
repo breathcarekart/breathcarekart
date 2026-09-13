@@ -1,12 +1,14 @@
 import { createFileRoute, Link, notFound } from "@tanstack/react-router";
 import { ArrowLeft, Copy, Download, Eye, Printer, Share2 } from "lucide-react";
 import { toast } from "sonner";
+import { createInvoiceDocumentData } from "@/components/invoices/invoice-document";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatusBadge, type Tone } from "@/components/shared/status-badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { customers, inr, invoices } from "@/lib/data";
+import { downloadInvoicePdf } from "@/lib/invoice-pdf";
 
 export const Route = createFileRoute("/_app/invoices/$invoiceId")({
   loader: ({ params }) => {
@@ -58,7 +60,18 @@ function InvoiceDetailsPage() {
             <Button variant="outline" className="rounded-xl" onClick={() => toast.info("Sending to printer…")}>
               <Printer className="size-4" /> Print
             </Button>
-            <Button variant="outline" className="rounded-xl" onClick={() => toast.success("PDF downloaded")}>
+            <Button
+              variant="outline"
+              className="rounded-xl"
+              onClick={async () => {
+                try {
+                  await downloadInvoicePdf(createInvoiceDocumentData(invoice, customer));
+                  toast.success("Invoice PDF downloaded");
+                } catch {
+                  toast.error("The invoice PDF could not be downloaded");
+                }
+              }}
+            >
               <Download className="size-4" /> PDF
             </Button>
             <Button variant="outline" className="rounded-xl" onClick={() => toast.success("Share link copied")}>

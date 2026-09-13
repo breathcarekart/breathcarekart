@@ -11,7 +11,7 @@ export type InvoiceLine = {
 
 export type InvoiceDocumentData = {
   invoice: Invoice;
-  customer?: Customer;
+  customer: Customer | undefined;
   lines: InvoiceLine[];
   subtotal: number;
   discount: number;

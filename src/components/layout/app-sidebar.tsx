@@ -9,8 +9,8 @@ import {
   Settings,
   UserRound,
   Users,
-  Stethoscope,
 } from "lucide-react";
+import { BrandLogo } from "@/components/shared/brand-logo";
 import {
   Sidebar,
   SidebarContent,
@@ -49,9 +49,7 @@ export function AppSidebar() {
     <Sidebar collapsible="icon" className="border-r">
       <SidebarHeader className="px-3 py-4">
         <Link to="/dashboard" className="flex items-center gap-2.5 overflow-hidden">
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-glow">
-            <Stethoscope className="size-4.5" />
-          </span>
+          <BrandLogo className="size-9 shrink-0 rounded-lg" />
           {!collapsed && (
             <span className="min-w-0">
               <span className="block truncate text-sm font-semibold leading-tight">Breath Care Kart</span>

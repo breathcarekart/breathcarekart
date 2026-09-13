@@ -61,6 +61,12 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+  --color-invoice-paper: var(--invoice-paper);
+  --color-invoice-ink: var(--invoice-ink);
+  --color-invoice-muted: var(--invoice-muted);
+  --color-invoice-brand: var(--invoice-brand);
+  --color-invoice-soft: var(--invoice-soft);
+  --color-invoice-line: var(--invoice-line);
   --shadow-xs: 0 1px 2px 0 oklch(0.2 0.03 260 / 0.04);
   --shadow-soft: 0 1px 2px oklch(0.2 0.03 260 / 0.04), 0 8px 24px -12px oklch(0.2 0.03 260 / 0.12);
   --shadow-lift: 0 2px 4px oklch(0.2 0.03 260 / 0.04), 0 18px 40px -16px oklch(0.2 0.03 260 / 0.18);
@@ -133,6 +139,12 @@
   --sidebar-accent-foreground: oklch(0.4 0.1 258);
   --sidebar-border: oklch(0.93 0.008 255);
   --sidebar-ring: oklch(0.55 0.2 258);
+  --invoice-paper: oklch(1 0 0);
+  --invoice-ink: oklch(0.25 0.02 255);
+  --invoice-muted: oklch(0.52 0.02 255);
+  --invoice-brand: oklch(0.48 0.14 245);
+  --invoice-soft: oklch(0.96 0.025 240);
+  --invoice-line: oklch(0.9 0.012 245);
 }
 
 .dark {
@@ -222,7 +234,24 @@
 }
 
 @media print {
+  @page {
+    size: A4 portrait;
+    margin: 0;
+  }
+
+  html,
+  body {
+    background: var(--invoice-paper) !important;
+  }
+
   .no-print {
     display: none !important;
+  }
+
+  .invoice-page {
+    width: 210mm !important;
+    min-height: 297mm !important;
+    max-width: none !important;
+    margin: 0 !important;
   }
 }

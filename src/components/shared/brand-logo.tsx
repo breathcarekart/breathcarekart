@@ -1,7 +1,7 @@
-import logoAsset from "@/assets/breath-care-kart-logo.jpeg.asset.json";
+import logoFile from "@/assets/breath-care-kart-logo.jpeg";
 import { cn } from "@/lib/utils";
 
-export const breathCareKartLogoUrl = logoAsset.url;
+export const breathCareKartLogoUrl = logoFile;
 
 export function BrandLogo({ className }: { className?: string }) {
   return (

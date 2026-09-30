@@ -22,6 +22,7 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
+import { supabase } from "@/lib/supabase";
 
 const titles: Record<string, string> = {
   dashboard: "Dashboard",
@@ -138,7 +139,14 @@ export function Topbar() {
             <DropdownMenuItem onClick={() => navigate({ to: "/profile" })}>Profile</DropdownMenuItem>
             <DropdownMenuItem onClick={() => navigate({ to: "/settings" })}>Settings</DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => navigate({ to: "/" })}>Logout</DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={async () => {
+                await supabase.auth.signOut();
+                navigate({ to: "/" });
+              }}
+            >
+              Logout
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

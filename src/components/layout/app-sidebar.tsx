@@ -1,4 +1,4 @@
-import { Link, useRouterState } from "@tanstack/react-router";
+import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import {
   BarChart3,
   Boxes,
@@ -24,6 +24,7 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { supabase } from "@/lib/supabase";
 
 const main = [
   { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
@@ -44,6 +45,12 @@ export function AppSidebar() {
   const collapsed = state === "collapsed";
   const pathname = useRouterState({ select: (r) => r.location.pathname });
   const isActive = (url: string) => pathname === url || pathname.startsWith(url + "/");
+  const navigate = useNavigate();
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    navigate({ to: "/" });
+  };
 
   return (
     <Sidebar collapsible="icon" className="border-r">
@@ -100,11 +107,13 @@ export function AppSidebar() {
       <SidebarFooter className="p-3">
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton asChild tooltip="Logout">
-              <Link to="/" className="flex items-center gap-2.5 text-muted-foreground">
-                <LogOut className="size-4" />
-                <span>Logout</span>
-              </Link>
+            <SidebarMenuButton
+              tooltip="Logout"
+              onClick={handleLogout}
+              className="text-muted-foreground"
+            >
+              <LogOut className="size-4" />
+              <span>Logout</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>

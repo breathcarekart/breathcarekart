@@ -1,11 +1,13 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
-import { ArrowRight, Loader2, Lock, Mail, ShieldCheck, Stethoscope } from "lucide-react";
-import { useState } from "react";
+import { AlertCircle, ArrowRight, Loader2, Lock, Mail, ShieldCheck, Stethoscope } from "lucide-react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import loginArt from "@/assets/login-illustration.jpg";
+import { supabase } from "@/lib/supabase";
+import { getSession } from "@/lib/auth";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -28,12 +30,32 @@ export const Route = createFileRoute("/")({
 
 function LoginPage() {
   const navigate = useNavigate();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const submit = (e: React.FormEvent) => {
+  useEffect(() => {
+    getSession().then((session) => {
+      if (session) navigate({ to: "/dashboard" });
+    });
+  }, [navigate]);
+
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
     setLoading(true);
-    setTimeout(() => navigate({ to: "/dashboard" }), 650);
+    const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+    setLoading(false);
+    if (signInError) {
+      setError(
+        signInError.message === "Invalid login credentials"
+          ? "Incorrect email or password."
+          : signInError.message,
+      );
+      return;
+    }
+    navigate({ to: "/dashboard" });
   };
 
   return (
@@ -56,6 +78,13 @@ function LoginPage() {
           </p>
 
           <form onSubmit={submit} className="mt-8 space-y-5">
+            {error && (
+              <div className="flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2.5 text-sm text-destructive">
+                <AlertCircle className="mt-0.5 size-4 shrink-0" />
+                <span>{error}</span>
+              </div>
+            )}
+
             <div className="space-y-2">
               <Label htmlFor="email">Email address</Label>
               <div className="relative">
@@ -64,7 +93,8 @@ function LoginPage() {
                   id="email"
                   type="email"
                   required
-                  defaultValue="arjun@breathcarekart.in"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
                   className="h-11 rounded-xl pl-9"
                 />
               </div>
@@ -83,7 +113,8 @@ function LoginPage() {
                   id="password"
                   type="password"
                   required
-                  defaultValue="demopassword"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
                   className="h-11 rounded-xl pl-9"
                 />
               </div>

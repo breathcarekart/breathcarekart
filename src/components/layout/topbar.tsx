@@ -1,5 +1,5 @@
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
-import { Bell, Moon, Search, Sun } from "lucide-react";
+import { Moon, Search, Sun } from "lucide-react";
 import { useEffect, useState } from "react";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Input } from "@/components/ui/input";
@@ -22,6 +22,10 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
+import { RoleBadge } from "@/components/shared/badges";
+import { NotificationsMenu } from "@/components/layout/notifications-menu";
+import { initials as toInitials } from "@/lib/format";
+import { canAccess, roleLabel, useCurrentUser } from "@/lib/roles";
 import { supabase } from "@/lib/supabase";
 
 const titles: Record<string, string> = {
@@ -34,6 +38,13 @@ const titles: Record<string, string> = {
   settings: "Settings",
   profile: "Profile",
   new: "New",
+  "rental-logs": "Rental Logs",
+  "sales-logs": "Sales Logs",
+  sales: "Sales",
+  payments: "Payments",
+  users: "Users & Roles",
+  activity: "Activity Log",
+  deliveries: "Deliveries",
 };
 
 function useThemeToggle() {
@@ -49,6 +60,8 @@ export function Topbar() {
   const navigate = useNavigate();
   const { dark, toggle } = useThemeToggle();
   const segments = pathname.split("/").filter(Boolean);
+  const { role, name } = useCurrentUser();
+  const initials = toInitials(name);
 
   return (
     <header className="glass-panel sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-x-0 border-t-0 px-4 lg:px-6">
@@ -92,52 +105,46 @@ export function Topbar() {
           <Search className="size-4" />
         </Button>
 
-        <Button variant="ghost" size="icon" className="rounded-xl" onClick={toggle} aria-label="Toggle theme">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="rounded-xl"
+          onClick={toggle}
+          aria-label="Toggle theme"
+        >
           {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
         </Button>
 
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" className="relative rounded-xl" aria-label="Notifications">
-              <Bell className="size-4" />
-              <span className="absolute right-2 top-2 size-1.5 rounded-full bg-danger" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-72">
-            <DropdownMenuLabel>Notifications</DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem className="flex-col items-start gap-0.5">
-              <span className="text-sm font-medium">2 rentals due in 3 days</span>
-              <span className="text-xs text-muted-foreground">Ramesh Iyer · 2 items</span>
-            </DropdownMenuItem>
-            <DropdownMenuItem className="flex-col items-start gap-0.5">
-              <span className="text-sm font-medium">Invoice BCK/2026/0093 overdue</span>
-              <span className="text-xs text-muted-foreground">Sabitha Nair · ₹9,500</span>
-            </DropdownMenuItem>
-            <DropdownMenuItem className="flex-col items-start gap-0.5">
-              <span className="text-sm font-medium">Bed EQ-1006 still in service</span>
-              <span className="text-xs text-muted-foreground">Motor replacement · 4 days</span>
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <NotificationsMenu />
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button className="flex items-center gap-2 rounded-xl p-1 pr-2 transition-colors hover:bg-accent">
               <Avatar className="size-8">
-                <AvatarFallback className="bg-primary text-xs text-primary-foreground">AK</AvatarFallback>
+                <AvatarFallback className="bg-primary text-xs text-primary-foreground">
+                  {initials}
+                </AvatarFallback>
               </Avatar>
               <span className="hidden text-left leading-tight lg:block">
-                <span className="block text-sm font-medium">Arjun Kamath</span>
-                <span className="block text-xs text-muted-foreground">Operations Admin</span>
+                <span className="block text-sm font-medium">{name}</span>
+                <span className="block text-xs text-muted-foreground">{roleLabel(role)}</span>
               </span>
             </button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-52">
-            <DropdownMenuLabel>My account</DropdownMenuLabel>
+          <DropdownMenuContent align="end" className="w-64">
+            <DropdownMenuLabel className="flex items-center justify-between gap-2">
+              <span className="truncate">{name}</span>
+              <RoleBadge role={role} />
+            </DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => navigate({ to: "/profile" })}>Profile</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => navigate({ to: "/settings" })}>Settings</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => navigate({ to: "/profile" })}>
+              Profile
+            </DropdownMenuItem>
+            {canAccess(role, "/settings") && (
+              <DropdownMenuItem onClick={() => navigate({ to: "/settings" })}>
+                Settings
+              </DropdownMenuItem>
+            )}
             <DropdownMenuSeparator />
             <DropdownMenuItem
               onClick={async () => {

@@ -8,12 +8,14 @@ export function PageHeader({
   className,
 }: {
   title: string;
-  description?: string;
+  description?: string | undefined;
   actions?: ReactNode;
-  className?: string;
+  className?: string | undefined;
 }) {
   return (
-    <div className={cn("flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between", className)}>
+    <div
+      className={cn("flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between", className)}
+    >
       <div className="space-y-1.5">
         <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">{title}</h1>
         {description ? <p className="text-sm text-muted-foreground">{description}</p> : null}

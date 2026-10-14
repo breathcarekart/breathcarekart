@@ -12,6 +12,17 @@ const tones = {
   active: "bg-success-soft text-success border-success/20",
   "due-soon": "bg-warning-soft text-warning-foreground border-warning/30",
   neutral: "bg-muted text-muted-foreground border-border",
+  // Rentals, sales & delivery
+  returned: "bg-muted text-muted-foreground border-border",
+  completed: "bg-success-soft text-success border-success/20",
+  cancelled: "bg-muted text-muted-foreground border-border",
+  assigned: "bg-primary-soft text-primary border-primary/20",
+  "out-for-delivery": "bg-warning-soft text-warning-foreground border-warning/30",
+  delivered: "bg-success-soft text-success border-success/20",
+  sold: "bg-primary-soft text-primary border-primary/20",
+  partial: "bg-warning-soft text-warning-foreground border-warning/30",
+  // Users
+  inactive: "bg-muted text-muted-foreground border-border",
 } as const;
 
 export type Tone = keyof typeof tones;
@@ -19,6 +30,7 @@ export type Tone = keyof typeof tones;
 const labels: Record<string, string> = {
   "due-soon": "Due soon",
   service: "In service",
+  "out-for-delivery": "Out for delivery",
 };
 
 export function StatusBadge({

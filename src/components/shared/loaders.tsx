@@ -1,5 +1,15 @@
+import { Loader2 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Card } from "@/components/ui/card";
+
+/** Shown while a client-only protected route checks the session. */
+export function FullPageLoader() {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-background" aria-busy="true">
+      <Loader2 className="size-6 animate-spin text-muted-foreground" aria-label="Loading" />
+    </div>
+  );
+}
 
 export function TableSkeleton({ rows = 6 }: { rows?: number }) {
   return (

@@ -1,3 +1,9 @@
+// LEGACY DEMO FIXTURES — not used by the app.
+// The app reads live data from Supabase (src/lib/db). This file is kept only as a
+// reference: its equipment list was derived from the client's 2024 rental register
+// and may help the register import. Customers, invoices, rentals and figures below
+// are sample data and must not be shown as real records.
+
 export type EquipmentStatus = "available" | "rented" | "service" | "damaged";
 
 export type Equipment = {
@@ -118,6 +124,23 @@ export const invoices: Invoice[] = [
   { id: "INV-9004", number: "BCK/2026/0094", customerId: "CU-2005", customer: "Joseph Fernandes", equipment: ["BiPAP Auto", "Compressor Nebulizer"], amount: 10500, paid: 10500, date: "2026-07-11", dueDate: "2026-07-18", status: "paid", period: "11 Jul – 10 Aug 2026" },
   { id: "INV-9005", number: "BCK/2026/0095", customerId: "CU-2004", customer: "Fatima Sheikh", equipment: ["Foldable Wheelchair"], amount: 2500, paid: 0, date: "2026-07-22", dueDate: "2026-07-29", status: "pending", period: "22 Jul – 21 Aug 2026" },
   { id: "INV-9006", number: "BCK/2026/0096", customerId: "CU-2006", customer: "Anjali Deshpande", equipment: ["Oxygen Concentrator 8L"], amount: 9800, paid: 0, date: "2026-08-02", dueDate: "2026-08-09", status: "draft", period: "02 Aug – 01 Sep 2026" },
+  {
+    id: "INV-9007",
+    number: "BCK/2026/0097",
+    customerId: "CU-2005",
+    customer: "Joseph Fernandes",
+    equipment: ["Wheelchair"],
+    amount: 10030,
+    paid: 10030,
+    date: "2026-07-14",
+    dueDate: "2026-07-21",
+    status: "paid",
+    period: "Sale · 14 Jul 2026",
+    subtotal: 8500,
+    discount: 0,
+    taxRate: 18,
+    tax: 1530,
+  },
 ];
 
 export const rentals: Rental[] = [

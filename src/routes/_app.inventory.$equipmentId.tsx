@@ -1,11 +1,23 @@
-import { createFileRoute, Link, notFound } from "@tanstack/react-router";
-import { ArrowLeft, CalendarClock, FileText, Pencil, Repeat, Wrench } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { ArrowLeft, HandCoins, Repeat } from "lucide-react";
+import { TransactionBadge } from "@/components/shared/badges";
+import { EmptyState } from "@/components/shared/empty-state";
+import { CardsSkeleton } from "@/components/shared/loaders";
 import { PageHeader } from "@/components/shared/page-header";
-import { StatusBadge, type Tone } from "@/components/shared/status-badge";
+import { QueryState } from "@/components/shared/query-state";
+import { StatusBadge } from "@/components/shared/status-badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Table,
   TableBody,
@@ -14,37 +26,33 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { EmptyState } from "@/components/shared/empty-state";
-import { equipment, inr, rentals } from "@/lib/data";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { equipmentQueries, updateEquipmentUnit, type fetchEquipmentUnit } from "@/lib/db/equipment";
+import { queryKeys } from "@/lib/db/query-keys";
+import type { EquipmentStatus, TransactionType } from "@/lib/db/types";
+import { formatDate, inr } from "@/lib/format";
+import { notifyError, notifySuccess } from "@/lib/notify";
+import {
+  equipmentStatusLabels,
+  equipmentStatusTone,
+  manualEquipmentStatuses,
+  rentalStage,
+  rentalStageLabels,
+  rentalStageTone,
+} from "@/lib/status";
 
 export const Route = createFileRoute("/_app/inventory/$equipmentId")({
-  loader: ({ params }) => {
-    const item = equipment.find((e) => e.id === params.equipmentId);
-    if (!item) throw notFound();
-    return { item };
-  },
-  head: ({ loaderData }) => {
-    if (!loaderData) {
-      return { meta: [{ title: "Equipment unavailable · Breath Care Kart" }, { name: "robots", content: "noindex" }] };
-    }
-    const t = `${loaderData.item.name} · Equipment · Breath Care Kart`;
-    const d = `${loaderData.item.brand} ${loaderData.item.model} — status, service history and rental record.`;
-    return {
-      meta: [
-        { title: t },
-        { name: "description", content: d },
-        { property: "og:title", content: t },
-        { property: "og:description", content: d },
-      ],
-    };
-  },
+  head: () => ({
+    meta: [{ title: "Equipment · Breath Care Kart" }, { name: "robots", content: "noindex" }],
+  }),
   component: EquipmentDetailsPage,
 });
 
-function EquipmentDetailsPage() {
-  const { item } = Route.useLoaderData();
-  const history = rentals.filter((r) => r.equipmentId === item.id);
+type UnitDetail = Awaited<ReturnType<typeof fetchEquipmentUnit>>;
 
+function EquipmentDetailsPage() {
+  const { equipmentId } = Route.useParams();
+  const query = useQuery(equipmentQueries.unit(equipmentId));
   return (
     <div className="space-y-6">
       <Button asChild variant="ghost" size="sm" className="-ml-2 rounded-xl text-muted-foreground">
@@ -52,161 +60,259 @@ function EquipmentDetailsPage() {
           <ArrowLeft className="size-4" /> Inventory
         </Link>
       </Button>
+      <QueryState
+        query={query}
+        loading={<CardsSkeleton />}
+        errorTitle="Couldn't load this equipment"
+      >
+        {(unit) => <EquipmentDetails unit={unit} />}
+      </QueryState>
+    </div>
+  );
+}
 
+function EquipmentDetails({ unit }: { unit: UnitDetail }) {
+  const queryClient = useQueryClient();
+  const txType = unit.available_for as TransactionType;
+  const title = `${unit.equipment_type?.name ?? "Equipment"}${unit.unit_code ? ` · ${unit.unit_code}` : ""}`;
+  const locked = unit.status === "on_rent" || unit.status === "sold";
+
+  const setStatus = useMutation({
+    mutationFn: (status: EquipmentStatus) => updateEquipmentUnit(unit.id, { status }),
+    onSuccess: async (_, status) => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.equipmentUnits.all });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.activity.all });
+      notifySuccess(`Status set to ${equipmentStatusLabels[status]}`);
+    },
+    onError: (error) => notifyError(error, "Couldn't change status"),
+  });
+
+  return (
+    <div className="space-y-6">
       <PageHeader
-        title={item.name}
-        description={`${item.brand} · ${item.model} · ${item.id}`}
+        title={title}
+        description={
+          [unit.brand, unit.model, unit.serial_number ? `S/N ${unit.serial_number}` : null]
+            .filter(Boolean)
+            .join(" · ") || undefined
+        }
         actions={
-          <>
-            <Button variant="outline" className="rounded-xl">
-              <Wrench className="size-4" /> Send to service
-            </Button>
-            <Button variant="outline" className="rounded-xl">
-              <Pencil className="size-4" /> Edit
-            </Button>
+          unit.status === "available" ? (
             <Button asChild className="rounded-xl">
-              <Link to="/invoices/new">
-                <Repeat className="size-4" /> Start rental
+              <Link to="/invoices/new" search={{ type: txType, equipment: unit.id }}>
+                {txType === "sale" ? (
+                  <HandCoins className="size-4" />
+                ) : (
+                  <Repeat className="size-4" />
+                )}
+                {txType === "sale" ? "Sell this unit" : "Rent this unit"}
               </Link>
             </Button>
-          </>
+          ) : undefined
         }
       />
 
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-4">
         <Card className="gap-1 p-5 shadow-xs">
           <p className="text-sm text-muted-foreground">Status</p>
           <div className="mt-1">
-            <StatusBadge tone={item.status as Tone} />
+            <StatusBadge
+              tone={equipmentStatusTone[unit.status]}
+              label={equipmentStatusLabels[unit.status]}
+            />
           </div>
         </Card>
         <Card className="gap-1 p-5 shadow-xs">
-          <p className="text-sm text-muted-foreground">Monthly rate</p>
-          <p className="text-xl font-semibold">{inr(item.monthlyRate)}</p>
+          <p className="text-sm text-muted-foreground">Transaction type</p>
+          <div className="mt-1">
+            <TransactionBadge type={txType} className="text-sm" />
+          </div>
         </Card>
         <Card className="gap-1 p-5 shadow-xs">
-          <p className="text-sm text-muted-foreground">Daily rate</p>
-          <p className="text-xl font-semibold">{inr(item.dailyRate)}</p>
+          <p className="text-sm text-muted-foreground">
+            {txType === "sale" ? "Selling price" : "Monthly rate"}
+          </p>
+          <p className="text-xl font-semibold">
+            {txType === "sale"
+              ? unit.sale_price != null
+                ? inr(unit.sale_price)
+                : "—"
+              : unit.monthly_rate != null
+                ? inr(unit.monthly_rate)
+                : "—"}
+          </p>
         </Card>
         <Card className="gap-1 p-5 shadow-xs">
           <p className="text-sm text-muted-foreground">In fleet since</p>
-          <p className="text-xl font-semibold">{item.purchaseDate}</p>
+          <p className="text-xl font-semibold">
+            {formatDate(unit.purchase_date ?? unit.created_at)}
+          </p>
         </Card>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
-        <Card className="gap-0 p-6 shadow-xs">
-          <Tabs defaultValue="rentals">
-            <TabsList className="rounded-xl">
-              <TabsTrigger value="rentals" className="rounded-lg">
-                Rental history
-              </TabsTrigger>
-              <TabsTrigger value="service" className="rounded-lg">
-                Service log
-              </TabsTrigger>
-              <TabsTrigger value="specs" className="rounded-lg">
-                Specifications
-              </TabsTrigger>
-            </TabsList>
+      <Card className="gap-0 p-6 shadow-xs">
+        <Tabs defaultValue="overview">
+          <TabsList className="h-auto flex-wrap rounded-xl">
+            <TabsTrigger value="overview" className="rounded-lg">
+              Overview
+            </TabsTrigger>
+            <TabsTrigger value="rentals" className="rounded-lg">
+              Rental History
+            </TabsTrigger>
+            <TabsTrigger value="sales" className="rounded-lg">
+              Sales History
+            </TabsTrigger>
+          </TabsList>
 
-            <TabsContent value="rentals" className="mt-5">
-              {history.length === 0 ? (
-                <EmptyState
-                  icon={Repeat}
-                  title="No rentals yet"
-                  description="This unit hasn't been rented out. It will appear here after its first dispatch."
-                />
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow className="bg-muted/50">
-                      <TableHead>Customer</TableHead>
-                      <TableHead>Start</TableHead>
-                      <TableHead>Due</TableHead>
-                      <TableHead className="text-right">Rate</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {history.map((r) => (
-                      <TableRow key={r.id} className="hover:bg-accent/50">
-                        <TableCell className="font-medium">{r.customer}</TableCell>
-                        <TableCell className="text-muted-foreground">{r.startDate}</TableCell>
-                        <TableCell className="text-muted-foreground">{r.dueDate}</TableCell>
-                        <TableCell className="text-right font-medium">{inr(r.rate)}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </TabsContent>
-
-            <TabsContent value="service" className="mt-5">
-              <ol className="space-y-5">
-                {[
-                  { title: "Preventive service completed", meta: "Filters replaced, flow calibrated", date: "12 Jun 2026" },
-                  { title: "Returned from rental", meta: "Sanitised and repacked", date: "30 May 2026" },
-                  { title: "Added to fleet", meta: `Purchased on ${item.purchaseDate}`, date: item.purchaseDate },
-                ].map((s, i, arr) => (
-                  <li key={s.title} className="relative flex gap-3">
-                    {i !== arr.length - 1 && <span className="absolute left-[15px] top-9 h-full w-px bg-border" />}
-                    <span className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-muted text-muted-foreground">
-                      <CalendarClock className="size-4" />
-                    </span>
-                    <div>
-                      <p className="text-sm font-medium">{s.title}</p>
-                      <p className="text-xs text-muted-foreground">{s.meta}</p>
-                      <p className="text-xs text-muted-foreground/70">{s.date}</p>
-                    </div>
-                  </li>
-                ))}
-              </ol>
-            </TabsContent>
-
-            <TabsContent value="specs" className="mt-5">
-              <dl className="grid gap-x-8 gap-y-4 sm:grid-cols-2">
-                {[
-                  ["Type", item.type],
-                  ["Brand", item.brand],
-                  ["Model", item.model],
-                  ["Serial number", item.serial],
-                  ["Asset ID", item.id],
-                  ["Purchase date", item.purchaseDate],
-                ].map(([k, v]) => (
-                  <div key={k}>
-                    <dt className="text-xs uppercase tracking-wide text-muted-foreground">{k}</dt>
-                    <dd className="mt-1 text-sm font-medium">{v}</dd>
-                  </div>
-                ))}
-              </dl>
-              {item.notes ? (
-                <>
-                  <Separator className="my-5" />
-                  <p className="text-sm text-muted-foreground">{item.notes}</p>
-                </>
-              ) : null}
-            </TabsContent>
-          </Tabs>
-        </Card>
-
-        <Card className="h-fit gap-0 p-6 shadow-xs">
-          <h2 className="text-base font-semibold">Linked invoices</h2>
-          <p className="text-sm text-muted-foreground">Billing documents that include this unit.</p>
-          <Separator className="my-4" />
-          <div className="space-y-3">
-            {["BCK/2026/0091", "BCK/2026/0084", "BCK/2026/0072"].map((n) => (
-              <div key={n} className="flex items-center justify-between rounded-xl border p-3">
-                <div className="flex items-center gap-2.5">
-                  <span className="flex size-8 items-center justify-center rounded-lg bg-primary-soft text-primary">
-                    <FileText className="size-4" />
-                  </span>
-                  <span className="text-sm font-medium">{n}</span>
+          <TabsContent value="overview" className="mt-5 space-y-6">
+            <dl className="grid gap-x-8 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
+              {[
+                ["Category", unit.equipment_type?.name],
+                ["Unit code", unit.unit_code],
+                ["Brand", unit.brand],
+                ["Model", unit.model],
+                ["Serial number", unit.serial_number],
+                ["Purchase date", unit.purchase_date ? formatDate(unit.purchase_date) : null],
+                ["Daily rate", unit.daily_rate != null ? inr(unit.daily_rate) : null],
+                ["Monthly rate", unit.monthly_rate != null ? inr(unit.monthly_rate) : null],
+                ["Selling price", unit.sale_price != null ? inr(unit.sale_price) : null],
+              ].map(([k, v]) => (
+                <div key={k}>
+                  <dt className="text-xs uppercase tracking-wide text-muted-foreground">{k}</dt>
+                  <dd className="mt-1 text-sm font-medium">{v || "—"}</dd>
                 </div>
-                <span className="text-sm text-muted-foreground">{inr(item.monthlyRate)}</span>
-              </div>
-            ))}
-          </div>
-        </Card>
-      </div>
+              ))}
+            </dl>
+            {unit.notes ? (
+              <p className="whitespace-pre-line text-sm text-muted-foreground">{unit.notes}</p>
+            ) : null}
+            <Separator />
+            <div className="max-w-xs space-y-2">
+              <Label className="text-sm">Change status</Label>
+              {locked ? (
+                <p className="text-sm text-muted-foreground">
+                  {unit.status === "on_rent"
+                    ? "On rent — it becomes available when the rental is returned."
+                    : "Sold units stay on record."}
+                </p>
+              ) : (
+                <Select
+                  value={unit.status}
+                  onValueChange={(v) => setStatus.mutate(v as EquipmentStatus)}
+                  disabled={setStatus.isPending}
+                >
+                  <SelectTrigger className="h-10 rounded-xl">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {manualEquipmentStatuses.map((s) => (
+                      <SelectItem key={s} value={s}>
+                        {equipmentStatusLabels[s]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+          </TabsContent>
+
+          <TabsContent value="rentals" className="mt-5">
+            {unit.rental_items.length === 0 ? (
+              <EmptyState
+                icon={Repeat}
+                title="No rentals yet"
+                description="Rentals of this unit will appear here."
+              />
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-muted/50">
+                    <TableHead>Rental</TableHead>
+                    <TableHead>Customer</TableHead>
+                    <TableHead className="hidden sm:table-cell">Period</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Rate</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {unit.rental_items.map((it) =>
+                    it.rental ? (
+                      <TableRow key={it.id} className="hover:bg-accent/50">
+                        <TableCell className="font-mono text-xs font-medium">
+                          <Link
+                            to="/deliveries/$rentalId"
+                            params={{ rentalId: it.rental.id }}
+                            className="hover:text-primary"
+                          >
+                            {it.rental.rental_number}
+                          </Link>
+                        </TableCell>
+                        <TableCell className="font-medium">{it.rental.customer?.name}</TableCell>
+                        <TableCell className="hidden text-muted-foreground sm:table-cell">
+                          {formatDate(it.rental.start_date)} →{" "}
+                          {formatDate(it.rental.returned_date ?? it.rental.due_date)}
+                        </TableCell>
+                        <TableCell>
+                          <StatusBadge
+                            tone={rentalStageTone[rentalStage(it.rental)]}
+                            label={rentalStageLabels[rentalStage(it.rental)]}
+                          />
+                        </TableCell>
+                        <TableCell className="text-right font-medium">
+                          {it.rate != null ? inr(it.rate) : "—"}
+                        </TableCell>
+                      </TableRow>
+                    ) : null,
+                  )}
+                </TableBody>
+              </Table>
+            )}
+          </TabsContent>
+
+          <TabsContent value="sales" className="mt-5">
+            {unit.sale_items.length === 0 ? (
+              <EmptyState
+                icon={HandCoins}
+                title="No sales recorded"
+                description={
+                  txType === "sale"
+                    ? "When this unit is sold, the sale will appear here."
+                    : "This unit is listed for rental."
+                }
+              />
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-muted/50">
+                    <TableHead>Sale</TableHead>
+                    <TableHead>Customer</TableHead>
+                    <TableHead className="hidden sm:table-cell">Date</TableHead>
+                    <TableHead className="text-right">Price</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {unit.sale_items.map((it) =>
+                    it.sale ? (
+                      <TableRow key={it.id} className="hover:bg-accent/50">
+                        <TableCell className="font-mono text-xs font-medium">
+                          {it.sale.sale_number}
+                        </TableCell>
+                        <TableCell className="font-medium">{it.sale.customer?.name}</TableCell>
+                        <TableCell className="hidden text-muted-foreground sm:table-cell">
+                          {formatDate(it.sale.sale_date)}
+                        </TableCell>
+                        <TableCell className="text-right font-medium">
+                          {inr(it.unit_price)}
+                        </TableCell>
+                      </TableRow>
+                    ) : null,
+                  )}
+                </TableBody>
+              </Table>
+            )}
+          </TabsContent>
+        </Tabs>
+      </Card>
     </div>
   );
 }

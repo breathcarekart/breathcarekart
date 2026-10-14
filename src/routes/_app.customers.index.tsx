@@ -1,21 +1,15 @@
+import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { Download, Plus, Search, Users } from "lucide-react";
+import { Download, Plus, Users } from "lucide-react";
 import { useMemo, useState } from "react";
-import { toast } from "sonner";
-import { PageHeader } from "@/components/shared/page-header";
 import { EmptyState } from "@/components/shared/empty-state";
+import { FilterBar, SearchFilter, SelectFilter } from "@/components/shared/filter-bar";
+import { PageHeader } from "@/components/shared/page-header";
+import { QueryState } from "@/components/shared/query-state";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -24,7 +18,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { customers, inr } from "@/lib/data";
+import { downloadCsv } from "@/lib/csv";
+import { customerQueries, type CustomerListItem } from "@/lib/db/customers";
+import { formatDate, inr, initials, phoneDigits } from "@/lib/format";
+import { totalPaid } from "@/lib/payments";
 
 export const Route = createFileRoute("/_app/customers/")({
   head: () => ({
@@ -32,45 +29,100 @@ export const Route = createFileRoute("/_app/customers/")({
       { title: "Customers · Breath Care Kart" },
       {
         name: "description",
-        content: "Patient and attender records with rental history, contact details and lifetime billing.",
+        content: "Patients and attenders with their rentals, invoices and balances.",
       },
-      { property: "og:title", content: "Customers · Breath Care Kart" },
-      { property: "og:description", content: "Patient and attender records with rental and billing history." },
     ],
   }),
   component: CustomersPage,
 });
 
-const initials = (n: string) =>
-  n
-    .split(" ")
-    .map((p: string) => p[0])
-    .slice(0, 2)
-    .join("");
+const billed = (c: CustomerListItem) =>
+  c.invoices
+    .filter((i) => i.status !== "cancelled" && i.status !== "draft")
+    .reduce((s, i) => s + Number(i.grand_total), 0);
+/** Paid via invoices or straight against rentals; each payment counted once. */
+const paid = (c: CustomerListItem) =>
+  totalPaid([
+    ...c.invoices.flatMap((i) => i.payments),
+    ...c.rental_payments.flatMap((r) => r.payments),
+  ]);
+const rentalCount = (c: CustomerListItem) => c.rentals[0]?.count ?? 0;
 
 function CustomersPage() {
-  const [query, setQuery] = useState("");
+  const query = useQuery(customerQueries.list());
+  const [search, setSearch] = useState("");
   const [city, setCity] = useState("all");
-  const cities = Array.from(new Set(customers.map((c) => c.city)));
 
-  const filtered = useMemo(
+  const customers = useMemo(() => query.data ?? [], [query.data]);
+  const cities = useMemo(
     () =>
-      customers.filter((c) => {
-        const q = query.toLowerCase();
-        const matchQ = !q || [c.name, c.phone, c.id, c.attender].some((v) => v.toLowerCase().includes(q));
-        return matchQ && (city === "all" || c.city === city);
-      }),
-    [query, city],
+      [...new Set(customers.map((c) => c.city).filter((c): c is string => !!c))]
+        .sort()
+        .map((c) => ({ value: c, label: c })),
+    [customers],
   );
+
+  const filtered = customers.filter((c) => {
+    const q = search.trim().toLowerCase();
+    const digits = phoneDigits(q);
+    const matchQ =
+      !q ||
+      [c.name, c.attender_name, c.city].some((v) => v?.toLowerCase().includes(q)) ||
+      (digits.length >= 4 &&
+        [c.phone, c.whatsapp].some((p) => p && phoneDigits(p).includes(digits)));
+    return matchQ && (city === "all" || c.city === city);
+  });
+
+  const exportCsv = () =>
+    downloadCsv(
+      "customers",
+      [
+        "Name",
+        "Age",
+        "Gender",
+        "Phone",
+        "WhatsApp",
+        "Attender",
+        "Relation",
+        "City",
+        "Address",
+        "Rentals",
+        "Billed",
+        "Paid",
+        "Customer since",
+      ],
+      filtered.map((c) => [
+        c.name,
+        c.age,
+        c.gender,
+        c.phone,
+        c.whatsapp,
+        c.attender_name,
+        c.attender_relation,
+        c.city,
+        c.address,
+        rentalCount(c),
+        billed(c),
+        paid(c),
+        c.customer_since,
+      ]),
+    );
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Customers"
-        description={`${customers.length} accounts · ${customers.reduce((s, c) => s + c.rentals, 0)} lifetime rentals`}
+        description={
+          query.data ? `${customers.length} customers` : "Patients, attenders and their history"
+        }
         actions={
           <>
-            <Button variant="outline" className="rounded-xl" onClick={() => toast.success("Customer list exported")}>
+            <Button
+              variant="outline"
+              className="rounded-xl"
+              onClick={exportCsv}
+              disabled={filtered.length === 0}
+            >
               <Download className="size-4" /> Export
             </Button>
             <Button asChild className="rounded-xl">
@@ -82,113 +134,98 @@ function CustomersPage() {
         }
       />
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {filtered.slice(0, 3).map((c) => (
-          <Link
-            key={c.id}
-            to="/customers/$customerId"
-            params={{ customerId: c.id }}
-            className="card-hover rounded-2xl border bg-card p-5"
-          >
-            <div className="flex items-center gap-3">
-              <Avatar className="size-11">
-                <AvatarFallback className="bg-primary-soft text-primary">{initials(c.name)}</AvatarFallback>
-              </Avatar>
-              <div className="min-w-0">
-                <p className="truncate text-sm font-semibold">{c.name}</p>
-                <p className="truncate text-xs text-muted-foreground">
-                  {c.age} yrs · {c.city}
-                </p>
-              </div>
-            </div>
-            <Separator className="my-4" />
-            <div className="flex items-center justify-between text-xs">
-              <span className="text-muted-foreground">{c.rentals} rentals</span>
-              <span className="font-medium">{inr(c.totalBilled)} billed</span>
-            </div>
-          </Link>
-        ))}
-      </div>
-
       <Card className="gap-0 overflow-hidden p-0 shadow-xs">
-        <div className="flex flex-wrap items-center gap-2 p-4">
-          <div className="relative min-w-56 flex-1">
-            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search patient, attender or phone"
-              className="h-10 rounded-xl pl-9"
-            />
-          </div>
-          <Select value={city} onValueChange={setCity}>
-            <SelectTrigger className="h-10 w-44 rounded-xl">
-              <SelectValue placeholder="City" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All cities</SelectItem>
-              {cities.map((c) => (
-                <SelectItem key={c} value={c}>
-                  {c}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <Separator />
-
-        {filtered.length === 0 ? (
-          <EmptyState
-            icon={Users}
-            title="No customers found"
-            description="No patient records match your search. Try another name, phone number or clear the city filter."
-            action={
-              <Button asChild className="mt-2 rounded-xl">
-                <Link to="/customers/new">Add customer</Link>
-              </Button>
-            }
+        <FilterBar>
+          <SearchFilter
+            value={search}
+            onChange={setSearch}
+            placeholder="Search name, attender, city or phone"
           />
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow className="bg-muted/50">
-                <TableHead>Patient</TableHead>
-                <TableHead className="hidden md:table-cell">Attender</TableHead>
-                <TableHead className="hidden lg:table-cell">Phone</TableHead>
-                <TableHead>Rentals</TableHead>
-                <TableHead className="text-right">Billed</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filtered.map((c) => (
-                <TableRow key={c.id} className="transition-colors hover:bg-accent/50">
-                  <TableCell>
-                    <Link to="/customers/$customerId" params={{ customerId: c.id }} className="group flex items-center gap-3">
-                      <Avatar className="size-9">
-                        <AvatarFallback className="bg-primary-soft text-xs text-primary">
-                          {initials(c.name)}
-                        </AvatarFallback>
-                      </Avatar>
-                      <span>
-                        <span className="block text-sm font-medium group-hover:text-primary">{c.name}</span>
+          <SelectFilter value={city} onChange={setCity} allLabel="All cities" options={cities} />
+        </FilterBar>
+        <Separator />
+        <QueryState query={query} errorTitle="Couldn't load customers">
+          {() =>
+            filtered.length === 0 ? (
+              <div className="p-4">
+                <EmptyState
+                  icon={Users}
+                  title={customers.length === 0 ? "No customers yet" : "No customers match"}
+                  description={
+                    customers.length === 0
+                      ? "Add your first customer to start renting or selling equipment."
+                      : "Try another name or phone number, or clear the city filter."
+                  }
+                  action={
+                    <Button asChild className="mt-2 rounded-xl">
+                      <Link to="/customers/new">Add customer</Link>
+                    </Button>
+                  }
+                />
+              </div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-muted/50">
+                    <TableHead>Patient</TableHead>
+                    <TableHead className="hidden md:table-cell">Attender</TableHead>
+                    <TableHead className="hidden lg:table-cell">Phone</TableHead>
+                    <TableHead className="hidden sm:table-cell">Rentals</TableHead>
+                    <TableHead className="text-right">Billed</TableHead>
+                    <TableHead className="text-right">Paid</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filtered.map((c) => (
+                    <TableRow key={c.id} className="transition-colors hover:bg-accent/50">
+                      <TableCell>
+                        <Link
+                          to="/customers/$customerId"
+                          params={{ customerId: c.id }}
+                          className="group flex items-center gap-3"
+                        >
+                          <Avatar className="size-9">
+                            <AvatarFallback className="bg-primary-soft text-xs text-primary">
+                              {initials(c.name)}
+                            </AvatarFallback>
+                          </Avatar>
+                          <span className="min-w-0">
+                            <span className="block text-sm font-medium group-hover:text-primary">
+                              {c.name}
+                            </span>
+                            <span className="block text-xs text-muted-foreground">
+                              {[c.gender, c.age != null ? `${c.age} yrs` : null, c.city]
+                                .filter(Boolean)
+                                .join(" · ") || `Since ${formatDate(c.customer_since)}`}
+                            </span>
+                          </span>
+                        </Link>
+                      </TableCell>
+                      <TableCell className="hidden text-sm md:table-cell">
+                        <span className="block">{c.attender_name ?? "—"}</span>
                         <span className="block text-xs text-muted-foreground">
-                          {c.gender}, {c.age} · {c.city}
+                          {c.attender_relation}
                         </span>
-                      </span>
-                    </Link>
-                  </TableCell>
-                  <TableCell className="hidden text-sm md:table-cell">
-                    <span className="block">{c.attender}</span>
-                    <span className="block text-xs text-muted-foreground">{c.attenderRelation}</span>
-                  </TableCell>
-                  <TableCell className="hidden text-sm text-muted-foreground lg:table-cell">{c.phone}</TableCell>
-                  <TableCell className="text-sm">{c.rentals}</TableCell>
-                  <TableCell className="text-right text-sm font-medium">{inr(c.totalBilled)}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
+                      </TableCell>
+                      <TableCell className="hidden text-sm text-muted-foreground lg:table-cell">
+                        {c.phone ?? "—"}
+                      </TableCell>
+                      <TableCell className="hidden text-sm sm:table-cell">
+                        {rentalCount(c)}
+                      </TableCell>
+                      <TableCell className="text-right text-sm font-medium">
+                        {inr(billed(c))}
+                      </TableCell>
+                      <TableCell className="text-right text-sm font-medium text-success">
+                        {inr(paid(c))}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )
+          }
+        </QueryState>
       </Card>
     </div>
   );

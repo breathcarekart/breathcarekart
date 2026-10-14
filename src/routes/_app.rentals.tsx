@@ -1,14 +1,25 @@
+import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { CalendarClock, PackageCheck, Repeat } from "lucide-react";
-import { toast } from "sonner";
+import { CalendarClock, ClipboardList, Plus, Repeat, ScrollText, Truck } from "lucide-react";
+import { useState } from "react";
+import {
+  RenewRentalDialog,
+  ReturnRentalDialog,
+  type RentalRef,
+} from "@/components/rentals/rental-actions";
+import { EmptyState } from "@/components/shared/empty-state";
+import { CardsSkeleton } from "@/components/shared/loaders";
 import { PageHeader } from "@/components/shared/page-header";
-import { StatusBadge, type Tone } from "@/components/shared/status-badge";
+import { QueryState } from "@/components/shared/query-state";
 import { StatCard } from "@/components/shared/stat-card";
+import { StatusBadge } from "@/components/shared/status-badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { inr, rentals } from "@/lib/data";
+import { rentalQueries } from "@/lib/db/rentals";
+import { formatDate, inr } from "@/lib/format";
+import { isOfficeRole, useCurrentUser } from "@/lib/roles";
+import { isOpenRental, rentalStage, rentalStageLabels, rentalStageTone } from "@/lib/status";
 
 export const Route = createFileRoute("/_app/rentals")({
   head: () => ({
@@ -16,119 +27,182 @@ export const Route = createFileRoute("/_app/rentals")({
       { title: "Active rentals · Breath Care Kart" },
       {
         name: "description",
-        content: "Track live rentals, due dates and returns. Renew or close a rental in a single click.",
+        content: "Open rentals with delivery status, due dates, renewals and returns.",
       },
-      { property: "og:title", content: "Active rentals · Breath Care Kart" },
-      { property: "og:description", content: "Live rentals with due dates, renewals and returns." },
     ],
   }),
   component: RentalsPage,
 });
 
 function RentalsPage() {
-  const overdue = rentals.filter((r) => r.status === "overdue").length;
-  const dueSoon = rentals.filter((r) => r.status === "due-soon").length;
-  const monthly = rentals.reduce((s, r) => s + r.rate, 0);
+  const { role } = useCurrentUser();
+  const office = isOfficeRole(role);
+  const query = useQuery(rentalQueries.list());
+  const [renewing, setRenewing] = useState<RentalRef | null>(null);
+  const [returning, setReturning] = useState<RentalRef | null>(null);
+
+  const open = (query.data ?? []).filter(isOpenRental);
+  const stages = open.map(rentalStage);
+  const awaiting = stages.filter(
+    (s) => s === "pending" || s === "assigned" || s === "out_for_delivery",
+  ).length;
+  const dueSoon = stages.filter((s) => s === "due_soon").length;
+  const overdue = stages.filter((s) => s === "overdue").length;
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Active rentals"
-        description={`${rentals.length} units in the field · ${inr(monthly)} recurring per month`}
+        description={query.data ? `${open.length} open rentals` : "Open rentals"}
+        actions={
+          <>
+            <Button asChild variant="outline" className="rounded-xl">
+              <Link to="/inventory/rental-logs">
+                <ScrollText className="size-4" /> Rental logs
+              </Link>
+            </Button>
+            {office && (
+              <Button asChild className="rounded-xl">
+                <Link to="/invoices/new" search={{ type: "rental" }}>
+                  <Plus className="size-4" /> New rental
+                </Link>
+              </Button>
+            )}
+          </>
+        }
       />
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Active rentals" value={String(rentals.length)} delta={7} icon={Repeat} hint="in the field" />
-        <StatCard label="Due in 7 days" value={String(dueSoon)} icon={CalendarClock} hint="plan pickups" />
-        <StatCard label="Overdue" value={String(overdue)} delta={-2} icon={CalendarClock} hint="needs follow-up" />
-        <StatCard label="Recurring value" value={inr(monthly)} delta={12} icon={PackageCheck} hint="per month" />
-      </div>
-
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {rentals.map((r) => (
-          <Card key={r.id} className="card-hover gap-0 p-5 shadow-xs">
-            <div className="flex items-start justify-between gap-2">
-              <div>
-                <p className="text-sm font-semibold">{r.equipment}</p>
-                <Link
-                  to="/customers/$customerId"
-                  params={{ customerId: r.customerId }}
-                  className="text-xs text-muted-foreground hover:text-primary"
-                >
-                  {r.customer}
-                </Link>
-              </div>
-              <StatusBadge tone={r.status as Tone} />
+      <QueryState query={query} loading={<CardsSkeleton />} errorTitle="Couldn't load rentals">
+        {() => (
+          <>
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              <StatCard
+                label="Open rentals"
+                value={String(open.length)}
+                icon={Repeat}
+                hint="not yet returned"
+              />
+              <StatCard
+                label="Awaiting delivery"
+                value={String(awaiting)}
+                icon={Truck}
+                hint="not delivered yet"
+              />
+              <StatCard
+                label="Due in 7 days"
+                value={String(dueSoon)}
+                icon={CalendarClock}
+                hint="plan pickups"
+              />
+              <StatCard
+                label="Overdue"
+                value={String(overdue)}
+                icon={ClipboardList}
+                hint="past end date"
+              />
             </div>
-            <Separator className="my-4" />
-            <dl className="space-y-1.5 text-xs">
-              <div className="flex justify-between">
-                <dt className="text-muted-foreground">Started</dt>
-                <dd>{r.startDate}</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-muted-foreground">Due</dt>
-                <dd>{r.dueDate}</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-muted-foreground">Rate</dt>
-                <dd className="font-medium">{inr(r.rate)}/mo</dd>
-              </div>
-            </dl>
-            <div className="mt-4 flex gap-2">
-              <Button
-                size="sm"
-                className="flex-1 rounded-xl"
-                onClick={() => toast.success(`${r.equipment} renewed for 30 days`)}
-              >
-                Renew
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                className="flex-1 rounded-xl"
-                onClick={() => toast.success(`${r.equipment} marked returned`)}
-              >
-                Return
-              </Button>
-            </div>
-          </Card>
-        ))}
-      </div>
 
-      <Card className="gap-0 overflow-hidden p-0 shadow-xs">
-        <div className="px-5 py-4">
-          <h2 className="text-base font-semibold">Rental ledger</h2>
-          <p className="text-sm text-muted-foreground">Every open rental with its billing schedule</p>
-        </div>
-        <Separator />
-        <Table>
-          <TableHeader>
-            <TableRow className="bg-muted/50">
-              <TableHead>Equipment</TableHead>
-              <TableHead>Customer</TableHead>
-              <TableHead className="hidden md:table-cell">Start</TableHead>
-              <TableHead>Due</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead className="text-right">Rate</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rentals.map((r) => (
-              <TableRow key={r.id} className="transition-colors hover:bg-accent/50">
-                <TableCell className="text-sm font-medium">{r.equipment}</TableCell>
-                <TableCell className="text-sm text-muted-foreground">{r.customer}</TableCell>
-                <TableCell className="hidden text-sm text-muted-foreground md:table-cell">{r.startDate}</TableCell>
-                <TableCell className="text-sm">{r.dueDate}</TableCell>
-                <TableCell>
-                  <StatusBadge tone={r.status as Tone} />
-                </TableCell>
-                <TableCell className="text-right text-sm font-medium">{inr(r.rate)}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </Card>
+            {open.length === 0 ? (
+              <EmptyState
+                icon={Repeat}
+                title="No open rentals"
+                description={
+                  office
+                    ? "Create a rental invoice to dispatch equipment."
+                    : "Rentals assigned to you will appear here."
+                }
+              />
+            ) : (
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                {open.map((r) => {
+                  const st = rentalStage(r);
+                  return (
+                    <Card key={r.id} className="card-hover gap-0 p-5 shadow-xs">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="font-mono text-xs text-muted-foreground">
+                            {r.rental_number}
+                          </p>
+                          <p className="truncate text-sm font-semibold">
+                            {r.rental_items
+                              .map((i) => i.equipment_type?.name ?? i.description)
+                              .join(", ")}
+                          </p>
+                          {office ? (
+                            <Link
+                              to="/customers/$customerId"
+                              params={{ customerId: r.customer_id }}
+                              className="text-xs text-muted-foreground hover:text-primary"
+                            >
+                              {r.customer?.name}
+                            </Link>
+                          ) : (
+                            <p className="text-xs text-muted-foreground">{r.customer?.name}</p>
+                          )}
+                        </div>
+                        <StatusBadge tone={rentalStageTone[st]} label={rentalStageLabels[st]} />
+                      </div>
+                      <Separator className="my-4" />
+                      <dl className="space-y-1.5 text-xs">
+                        <div className="flex justify-between">
+                          <dt className="text-muted-foreground">Supervisor</dt>
+                          <dd>{r.supervisor?.full_name ?? "Unassigned"}</dd>
+                        </div>
+                        <div className="flex justify-between">
+                          <dt className="text-muted-foreground">Started</dt>
+                          <dd>{formatDate(r.start_date)}</dd>
+                        </div>
+                        <div className="flex justify-between">
+                          <dt className="text-muted-foreground">Ends</dt>
+                          <dd>{formatDate(r.due_date)}</dd>
+                        </div>
+                        <div className="flex justify-between">
+                          <dt className="text-muted-foreground">Rate</dt>
+                          <dd className="font-medium">
+                            {inr(r.rental_items.reduce((s, i) => s + Number(i.rate ?? 0), 0))}/mo
+                          </dd>
+                        </div>
+                      </dl>
+                      <Button
+                        asChild
+                        variant="ghost"
+                        size="sm"
+                        className="mt-3 h-8 w-full rounded-xl text-primary"
+                      >
+                        <Link to="/deliveries/$rentalId" params={{ rentalId: r.id }}>
+                          <Truck className="size-4" /> Rental &amp; delivery
+                        </Link>
+                      </Button>
+                      {office && (
+                        <div className="mt-2 flex gap-2">
+                          <Button
+                            size="sm"
+                            className="flex-1 rounded-xl"
+                            onClick={() => setRenewing(r)}
+                          >
+                            Renew
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="flex-1 rounded-xl"
+                            onClick={() => setReturning(r)}
+                          >
+                            Return
+                          </Button>
+                        </div>
+                      )}
+                    </Card>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        )}
+      </QueryState>
+
+      <RenewRentalDialog rental={renewing} onClose={() => setRenewing(null)} />
+      <ReturnRentalDialog rental={returning} onClose={() => setReturning(null)} />
     </div>
   );
 }

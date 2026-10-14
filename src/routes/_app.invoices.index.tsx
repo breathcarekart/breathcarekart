@@ -1,18 +1,40 @@
+import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { Download, FileText, Plus, Search } from "lucide-react";
+import { AlertCircle, CircleDollarSign, Download, FileText, Plus, Wallet } from "lucide-react";
 import { useMemo, useState } from "react";
-import { toast } from "sonner";
-import { PageHeader } from "@/components/shared/page-header";
-import { StatusBadge, type Tone } from "@/components/shared/status-badge";
+import { TransactionBadge } from "@/components/shared/badges";
 import { EmptyState } from "@/components/shared/empty-state";
+import {
+  DateRangeFilter,
+  FilterBar,
+  SearchFilter,
+  SelectFilter,
+} from "@/components/shared/filter-bar";
+import { PageHeader } from "@/components/shared/page-header";
+import { QueryState } from "@/components/shared/query-state";
 import { StatCard } from "@/components/shared/stat-card";
+import { StatusBadge } from "@/components/shared/status-badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { inr, invoices } from "@/lib/data";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { downloadCsv } from "@/lib/csv";
+import { invoiceQueries } from "@/lib/db/invoices";
+import { formatDate, inDateRange, inr } from "@/lib/format";
+import {
+  outstandingOf,
+  paymentState,
+  paymentStateLabels,
+  paymentStateTone,
+  type PaymentState,
+} from "@/lib/status";
 
 export const Route = createFileRoute("/_app/invoices/")({
   head: () => ({
@@ -20,40 +42,100 @@ export const Route = createFileRoute("/_app/invoices/")({
       { title: "Invoices · Breath Care Kart" },
       {
         name: "description",
-        content: "All rental invoices with payment status, billing period, customer and amount due.",
+        content: "Rental and sale invoices with payment status and balances.",
       },
-      { property: "og:title", content: "Invoices · Breath Care Kart" },
-      { property: "og:description", content: "Rental invoices with payment status and amounts due." },
     ],
   }),
   component: InvoiceListPage,
 });
 
+const stateOptions = (Object.keys(paymentStateLabels) as PaymentState[]).map((s) => ({
+  value: s,
+  label: paymentStateLabels[s],
+}));
+
 function InvoiceListPage() {
-  const [query, setQuery] = useState("");
-  const [status, setStatus] = useState("all");
+  const query = useQuery(invoiceQueries.list());
+  const [search, setSearch] = useState("");
+  const [state, setState] = useState("all");
+  const [txType, setTxType] = useState("all");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
 
-  const filtered = useMemo(
-    () =>
-      invoices.filter((i) => {
-        const q = query.toLowerCase();
-        const matchQ = !q || [i.number, i.customer, i.id].some((v) => v.toLowerCase().includes(q));
-        return matchQ && (status === "all" || i.status === status);
-      }),
-    [query, status],
-  );
+  const invoices = useMemo(() => query.data ?? [], [query.data]);
+  const filtered = invoices.filter((i) => {
+    const q = search.trim().toLowerCase();
+    return (
+      (!q ||
+        [i.invoice_number, i.customer?.name, i.creator?.full_name].some((v) =>
+          v?.toLowerCase().includes(q),
+        )) &&
+      (state === "all" || paymentState(i) === state) &&
+      (txType === "all" || i.transaction_type === txType) &&
+      inDateRange(i.invoice_date, from, to)
+    );
+  });
 
-  const billed = invoices.reduce((s, i) => s + i.amount, 0);
-  const collected = invoices.reduce((s, i) => s + i.paid, 0);
+  const live = invoices.filter((i) => i.status !== "cancelled" && i.status !== "draft");
+  const billed = live.reduce((s, i) => s + Number(i.grand_total), 0);
+  const collected = live.reduce((s, i) => s + Number(i.amount_paid), 0);
+  const outstanding = live.reduce((s, i) => s + outstandingOf(i), 0);
+  const overdue = invoices.filter((i) => paymentState(i) === "overdue").length;
+
+  const exportCsv = () =>
+    downloadCsv(
+      "invoices",
+      [
+        "Invoice",
+        "Date",
+        "Due",
+        "Customer",
+        "Type",
+        "Subtotal",
+        "Discount",
+        "GST %",
+        "GST",
+        "Total",
+        "Paid",
+        "Outstanding",
+        "Status",
+        "Created by",
+      ],
+      filtered.map((i) => [
+        i.invoice_number,
+        i.invoice_date,
+        i.due_date,
+        i.customer?.name,
+        i.transaction_type,
+        i.subtotal,
+        i.discount,
+        i.tax_rate,
+        i.tax_amount,
+        i.grand_total,
+        i.amount_paid,
+        outstandingOf(i),
+        paymentStateLabels[paymentState(i)],
+        i.creator?.full_name,
+      ]),
+    );
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Invoices"
-        description={`${invoices.length} invoices this cycle · ${inr(billed - collected)} outstanding`}
+        description={
+          query.data
+            ? `${invoices.length} invoices · ${inr(outstanding)} outstanding`
+            : "Rental and sale invoices"
+        }
         actions={
           <>
-            <Button variant="outline" className="rounded-xl" onClick={() => toast.success("Invoices exported")}>
+            <Button
+              variant="outline"
+              className="rounded-xl"
+              onClick={exportCsv}
+              disabled={filtered.length === 0}
+            >
               <Download className="size-4" /> Export
             </Button>
             <Button asChild className="rounded-xl">
@@ -66,89 +148,121 @@ function InvoiceListPage() {
       />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Total billed" value={inr(billed)} delta={11} icon={FileText} hint="this cycle" />
-        <StatCard label="Collected" value={inr(collected)} delta={8} icon={FileText} hint="received" />
-        <StatCard label="Outstanding" value={inr(billed - collected)} delta={-4} icon={FileText} hint="pending + overdue" />
         <StatCard
-          label="Overdue"
-          value={String(invoices.filter((i) => i.status === "overdue").length)}
+          label="Total billed"
+          value={inr(billed)}
           icon={FileText}
-          hint="needs follow-up"
+          hint={`${live.length} issued invoices`}
         />
+        <StatCard label="Collected" value={inr(collected)} icon={Wallet} hint="payments received" />
+        <StatCard
+          label="Outstanding"
+          value={inr(outstanding)}
+          icon={CircleDollarSign}
+          hint="not yet paid"
+        />
+        <StatCard label="Overdue" value={String(overdue)} icon={AlertCircle} hint="past due date" />
       </div>
 
       <Card className="gap-0 overflow-hidden p-0 shadow-xs">
-        <div className="flex flex-wrap items-center gap-2 p-4">
-          <div className="relative min-w-56 flex-1">
-            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search invoice number or customer"
-              className="h-10 rounded-xl pl-9"
-            />
-          </div>
-          <Select value={status} onValueChange={setStatus}>
-            <SelectTrigger className="h-10 w-40 rounded-xl">
-              <SelectValue placeholder="Status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All statuses</SelectItem>
-              <SelectItem value="paid">Paid</SelectItem>
-              <SelectItem value="pending">Pending</SelectItem>
-              <SelectItem value="overdue">Overdue</SelectItem>
-              <SelectItem value="draft">Draft</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <Separator />
-
-        {filtered.length === 0 ? (
-          <EmptyState
-            icon={FileText}
-            title="No invoices found"
-            description="Nothing matches this search. Adjust the filters or create a new invoice."
-            action={
-              <Button asChild className="mt-2 rounded-xl">
-                <Link to="/invoices/new">Create invoice</Link>
-              </Button>
-            }
+        <FilterBar>
+          <SearchFilter
+            value={search}
+            onChange={setSearch}
+            placeholder="Search invoice number, customer or creator"
           />
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow className="bg-muted/50">
-                <TableHead>Invoice</TableHead>
-                <TableHead>Customer</TableHead>
-                <TableHead className="hidden lg:table-cell">Equipment</TableHead>
-                <TableHead className="hidden md:table-cell">Date</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="text-right">Amount</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filtered.map((inv) => (
-                <TableRow key={inv.id} className="transition-colors hover:bg-accent/50">
-                  <TableCell>
-                    <Link to="/invoices/$invoiceId" params={{ invoiceId: inv.id }} className="group block">
-                      <span className="block text-sm font-medium group-hover:text-primary">{inv.number}</span>
-                      <span className="block text-xs text-muted-foreground">{inv.period}</span>
-                    </Link>
-                  </TableCell>
-                  <TableCell className="text-sm">{inv.customer}</TableCell>
-                  <TableCell className="hidden max-w-56 truncate text-sm text-muted-foreground lg:table-cell">
-                    {inv.equipment.join(", ")}
-                  </TableCell>
-                  <TableCell className="hidden text-sm text-muted-foreground md:table-cell">{inv.date}</TableCell>
-                  <TableCell>
-                    <StatusBadge tone={inv.status as Tone} />
-                  </TableCell>
-                  <TableCell className="text-right text-sm font-medium">{inr(inv.amount)}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
+          <SelectFilter
+            value={state}
+            onChange={setState}
+            allLabel="All statuses"
+            options={stateOptions}
+            className="sm:w-40"
+          />
+          <SelectFilter
+            value={txType}
+            onChange={setTxType}
+            allLabel="Rental & sale"
+            options={[
+              { value: "rental", label: "Rental" },
+              { value: "sale", label: "Sale" },
+            ]}
+            className="sm:w-36"
+          />
+          <DateRangeFilter from={from} to={to} onFromChange={setFrom} onToChange={setTo} />
+        </FilterBar>
+        <Separator />
+        <QueryState query={query} errorTitle="Couldn't load invoices">
+          {() =>
+            filtered.length === 0 ? (
+              <div className="p-4">
+                <EmptyState
+                  icon={FileText}
+                  title={invoices.length === 0 ? "No invoices yet" : "No invoices match"}
+                  description={
+                    invoices.length === 0
+                      ? "Create a rental or sale invoice to get started."
+                      : "Adjust the filters to see more invoices."
+                  }
+                  action={
+                    <Button asChild className="mt-2 rounded-xl">
+                      <Link to="/invoices/new">Create invoice</Link>
+                    </Button>
+                  }
+                />
+              </div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-muted/50">
+                    <TableHead>Invoice</TableHead>
+                    <TableHead>Customer</TableHead>
+                    <TableHead className="hidden md:table-cell">Type</TableHead>
+                    <TableHead className="hidden lg:table-cell">Date</TableHead>
+                    <TableHead className="hidden xl:table-cell">Created by</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Total</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filtered.map((i) => {
+                    const st = paymentState(i);
+                    return (
+                      <TableRow key={i.id} className="transition-colors hover:bg-accent/50">
+                        <TableCell className="font-medium">
+                          <Link
+                            to="/invoices/$invoiceId"
+                            params={{ invoiceId: i.id }}
+                            className="hover:text-primary"
+                          >
+                            {i.invoice_number}
+                          </Link>
+                        </TableCell>
+                        <TableCell className="text-sm">{i.customer?.name}</TableCell>
+                        <TableCell className="hidden md:table-cell">
+                          <TransactionBadge
+                            type={i.transaction_type === "sale" ? "sale" : "rental"}
+                          />
+                        </TableCell>
+                        <TableCell className="hidden text-sm text-muted-foreground lg:table-cell">
+                          {formatDate(i.invoice_date)}
+                        </TableCell>
+                        <TableCell className="hidden text-sm text-muted-foreground xl:table-cell">
+                          {i.creator?.full_name ?? "—"}
+                        </TableCell>
+                        <TableCell>
+                          <StatusBadge tone={paymentStateTone[st]} label={paymentStateLabels[st]} />
+                        </TableCell>
+                        <TableCell className="text-right text-sm font-medium">
+                          {inr(i.grand_total)}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            )
+          }
+        </QueryState>
       </Card>
     </div>
   );

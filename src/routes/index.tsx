@@ -1,13 +1,21 @@
-import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
-import { AlertCircle, ArrowRight, Loader2, Lock, Mail, ShieldCheck, Stethoscope } from "lucide-react";
-import { useEffect, useState } from "react";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import {
+  AlertCircle,
+  ArrowRight,
+  Loader2,
+  Lock,
+  Mail,
+  ShieldCheck,
+  Stethoscope,
+} from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import loginArt from "@/assets/login-illustration.jpg";
-import { supabase } from "@/lib/supabase";
-import { getSession } from "@/lib/auth";
+import { isSupabaseConfigured, supabase } from "@/lib/supabase";
+import { getSession, safeRedirectPath } from "@/lib/auth";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -25,25 +33,42 @@ export const Route = createFileRoute("/")({
       },
     ],
   }),
+  // `redirect` is set by the route guard so users return to the page they asked for.
+  // The key is always returned: the router keeps raw search params a validator
+  // omits, so leaving it out would let an unsafe value through.
+  validateSearch: (search: Record<string, unknown>): { redirect?: string | undefined } => ({
+    redirect: safeRedirectPath(search["redirect"]) ?? undefined,
+  }),
   component: LoginPage,
 });
 
 function LoginPage() {
   const navigate = useNavigate();
+  // Re-checked here as well: only same-origin paths are ever navigated to.
+  const redirect = safeRedirectPath(Route.useSearch().redirect);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const goNext = useCallback(
+    () => (redirect ? navigate({ href: redirect }) : navigate({ to: "/dashboard" })),
+    [navigate, redirect],
+  );
+
   useEffect(() => {
     getSession().then((session) => {
-      if (session) navigate({ to: "/dashboard" });
+      if (session) goNext();
     });
-  }, [navigate]);
+  }, [goNext]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    if (!isSupabaseConfigured) {
+      setError("Sign-in isn't configured for this environment. Contact your administrator.");
+      return;
+    }
     setLoading(true);
     const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
     setLoading(false);
@@ -55,7 +80,7 @@ function LoginPage() {
       );
       return;
     }
-    navigate({ to: "/dashboard" });
+    goNext();
   };
 
   return (
@@ -103,9 +128,9 @@ function LoginPage() {
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <Label htmlFor="password">Password</Label>
-                <button type="button" className="text-xs font-medium text-primary hover:underline">
-                  Forgot password?
-                </button>
+                <span className="text-xs text-muted-foreground">
+                  Forgot your password? Ask your admin.
+                </span>
               </div>
               <div className="relative">
                 <Lock className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -138,13 +163,6 @@ function LoginPage() {
             <ShieldCheck className="size-4 text-success" />
             Protected workspace · audit logged
           </div>
-
-          <p className="mt-6 text-xs text-muted-foreground">
-            Need access?{" "}
-            <Link to="/dashboard" className="font-medium text-primary hover:underline">
-              Explore the demo workspace
-            </Link>
-          </p>
         </div>
       </div>
 

@@ -9,7 +9,11 @@
     "build:dev": "vite build --mode development",
     "preview": "vite preview",
     "lint": "eslint .",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "typecheck": "tsc --noEmit",
+    "db:types": "npx --yes supabase gen types typescript --linked --schema public > src/lib/database.types.ts",
+    "test:db": "node supabase/tests/workflows.test.mjs",
+    "test:unit": "node --test src/lib/payments.test.ts supabase/functions/create-staff-user/handler.test.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
@@ -69,6 +73,7 @@
     "zod": "^3.24.2"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "@eslint/js": "^9.32.0",
     "@lovable.dev/vite-tanstack-config": "2.13.1",
     "@types/node": "^22.16.5",

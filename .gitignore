@@ -36,3 +36,11 @@ supabase/.branches
 *.njsproj
 *.sln
 *.sw?
+
+# Environment files and local backups (never commit)
+.env.*
+!.env.example
+*.dump
+*.sql.gz
+backups/
+breathcarekart-backups/

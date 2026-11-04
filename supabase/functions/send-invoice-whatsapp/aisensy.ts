@@ -8,6 +8,17 @@ export type ProviderResult =
   | { kind: "timeout" }
   | { kind: "network_error" };
 
+/** True when a (sanitised) AiSensy reply says the request failed despite its HTTP status. */
+export function reportsFailure(response: unknown): boolean {
+  if (!response || typeof response !== "object") return false;
+  const r = response as Record<string, unknown>;
+  const success = r["success"];
+  if (success === false || success === "false") return true;
+  return ["error", "errorMessage", "errors"].some(
+    (k) => r[k] != null && r[k] !== "" && r[k] !== false,
+  );
+}
+
 export async function postCampaign(
   payload: CampaignPayload,
   apiKey: string,
@@ -25,8 +36,10 @@ export async function postCampaign(
     });
     const text = await res.text().catch(() => "");
     const response = sanitizeProviderResponse(text, apiKey);
-    // A 2xx means AiSensy ACCEPTED the request. It is not a delivery confirmation.
-    return res.ok
+    // A 2xx means AiSensy ACCEPTED the request (not a delivery confirmation), unless the
+    // body itself reports a failure: the docs don't define the response body, so a 200
+    // carrying `success: false` or an error message is treated as a rejection.
+    return res.ok && !reportsFailure(response)
       ? { kind: "accepted", httpStatus: res.status, response }
       : { kind: "rejected", httpStatus: res.status, response };
   } catch (e) {

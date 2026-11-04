@@ -274,3 +274,19 @@ test("signed URL tokens are redacted before display or logging", () => {
     "https://x/y.pdf?token=[redacted]&a=1",
   );
 });
+
+test("a 200 whose body reports a failure is a rejection, never a success", async () => {
+  for (const body of [
+    '{"success":"false","message":"Campaign not live"}',
+    '{"success":false}',
+    '{"errorMessage":"Template params count mismatch"}',
+    '{"error":"Invalid campaign"}',
+  ]) {
+    const r = await postCampaign(payload, "K", fakeFetch(200, body, []));
+    assert.equal(r.kind, "rejected", body);
+  }
+  for (const body of ['{"success":"true","submitted_message_id":"abc"}', "", "OK"]) {
+    const r = await postCampaign(payload, "K", fakeFetch(200, body, []));
+    assert.equal(r.kind, "accepted", body);
+  }
+});

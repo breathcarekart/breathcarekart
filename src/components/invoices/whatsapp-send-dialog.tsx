@@ -331,8 +331,9 @@ export function WhatsAppSendPanel(p: WhatsAppSendPanelProps) {
 
       {!p.configured ? (
         <PreviewNotice>
-          WhatsApp sending isn't switched on for this environment, so nothing will be sent from
-          here. You can open a chat and send the message yourself.
+          Automatic sending from the Breath Care Kart WhatsApp Business number isn't switched on
+          yet, so nothing will be sent from here. An admin can enable it. Meanwhile you can open a
+          chat and send the message yourself from your own WhatsApp.
         </PreviewNotice>
       ) : p.blockedReason ? (
         <Notice tone="warning">{p.blockedReason}</Notice>
@@ -487,7 +488,7 @@ export function WhatsAppSendPanel(p: WhatsAppSendPanelProps) {
         {!p.configured && p.chatLink ? (
           <Button asChild variant="outline" className="rounded-xl">
             <a href={p.chatLink} target="_blank" rel="noreferrer">
-              <ExternalLink className="size-4" /> Open WhatsApp chat
+              <ExternalLink className="size-4" /> Open chat (manual)
             </a>
           </Button>
         ) : null}

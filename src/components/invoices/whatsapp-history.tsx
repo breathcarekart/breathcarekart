@@ -14,8 +14,14 @@ import {
 } from "@/components/ui/table";
 import { DataError } from "@/lib/db/errors";
 import { formatDateTime } from "@/lib/format";
-import { isWhatsAppConfigured, whatsAppQueries, type WhatsAppHistoryEntry } from "@/lib/whatsapp";
 import {
+  isWhatsAppConfigured,
+  whatsAppQueries,
+  type WhatsAppHistoryEntry,
+  type WhatsAppHistoryTarget,
+} from "@/lib/whatsapp";
+import {
+  campaignLabels,
   historyStatusLabels,
   historyStatusTone,
   maskDestination,
@@ -24,9 +30,9 @@ import {
 } from "@/lib/whatsapp-ui";
 
 /** Every WhatsApp attempt for one invoice (dry runs, test sends, failures). Office roles only. */
-export function WhatsAppHistory({ invoiceId }: { invoiceId: string }) {
+export function WhatsAppHistory({ target }: { target: WhatsAppHistoryTarget }) {
   const configured = isWhatsAppConfigured();
-  const history = useQuery({ ...whatsAppQueries.history(invoiceId), enabled: configured });
+  const history = useQuery({ ...whatsAppQueries.history(target), enabled: configured });
   // PGRST205: the table isn't in this database yet (migration not applied).
   const missingTable = history.error instanceof DataError && history.error.code === "PGRST205";
 
@@ -104,13 +110,13 @@ export function WhatsAppHistoryCard({
       ) : state.kind === "error" ? (
         <Empty>{state.message}</Empty>
       ) : state.entries.length === 0 ? (
-        <Empty>No WhatsApp sends for this invoice yet.</Empty>
+        <Empty>No WhatsApp messages yet.</Empty>
       ) : (
         <Table>
           <TableHeader>
             <TableRow className="bg-muted/50">
               <TableHead>Date &amp; time</TableHead>
-              <TableHead className="hidden sm:table-cell">Mode</TableHead>
+              <TableHead className="hidden sm:table-cell">Message</TableHead>
               <TableHead className="hidden md:table-cell">Sent to</TableHead>
               <TableHead className="text-right sm:text-left">Status</TableHead>
             </TableRow>
@@ -125,11 +131,18 @@ export function WhatsAppHistoryCard({
                     <span className="block text-xs text-muted-foreground">
                       {m.requester?.full_name ?? "Staff member"}
                       {/* Mode and destination fold in here on small screens. */}
-                      <span className="sm:hidden"> · {modeLabels[m.mode] ?? m.mode}</span>
+                      <span className="sm:hidden">
+                        {" "}
+                        · {campaignLabels[m.campaign_name] ?? m.campaign_name} ·{" "}
+                        {modeLabels[m.mode] ?? m.mode}
+                      </span>
                     </span>
                   </TableCell>
                   <TableCell className="hidden align-top text-sm sm:table-cell">
-                    {modeLabels[m.mode] ?? m.mode}
+                    {campaignLabels[m.campaign_name] ?? m.campaign_name}
+                    <span className="block text-xs text-muted-foreground">
+                      {modeLabels[m.mode] ?? m.mode}
+                    </span>
                     {m.is_resend ? (
                       <span className="block text-xs text-muted-foreground">Sent again</span>
                     ) : null}

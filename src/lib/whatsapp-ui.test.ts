@@ -9,12 +9,14 @@ import {
   historyStatusLabels,
   historyStatusTone,
   inFlightPhase,
+  initialSendMode,
   isOutcomeUnknown,
   maskCustomerPhone,
   maskDestination,
   modeOptions,
   needsResendConfirmation,
   phaseLabels,
+  previewValues,
   resultPhase,
   safeHistoryError,
   type WhatsAppPreview,
@@ -35,12 +37,44 @@ const preview = (over: Partial<WhatsAppPreview> = {}): WhatsAppPreview => ({
 });
 
 // ── Modes ──────────────────────────────────────────────────────────────────
-test("dry run is the default and live is never offered", () => {
+test("send to customer is offered first and pre-selected only when the server allows it", () => {
   assert.equal(DEFAULT_SEND_MODE, "dry_run");
-  const all = modeOptions(preview({ modes: { dry_run: true, test: true, live: true } }));
+  const on = preview({ modes: { dry_run: true, test: true, live: true } });
   assert.deepEqual(
-    all.map((o) => o.mode),
-    ["dry_run", "test"],
+    modeOptions(on).map((o) => [o.mode, o.available]),
+    [
+      ["live", true],
+      ["test", true],
+      ["dry_run", true],
+    ],
+  );
+  assert.equal(initialSendMode(on), "live");
+  const off = preview({ modes: { dry_run: true, test: false, live: false } });
+  assert.equal(modeOptions(off).find((o) => o.mode === "live")?.available, false);
+  assert.equal(initialSendMode(off), "dry_run");
+  assert.equal(initialSendMode(null), "dry_run");
+});
+
+test("a repeat to the customer checks the customer history, not the test history", () => {
+  const sentLive = preview({ already_sent: { live: true, test: false } });
+  assert.equal(needsResendConfirmation("live", sentLive, null), true);
+  assert.equal(needsResendConfirmation("test", sentLive, null), false);
+  const sentTest = preview({ already_sent: { live: false, test: true } });
+  assert.equal(needsResendConfirmation("live", sentTest, null), false);
+});
+
+test("the review step lists every message value with its name", () => {
+  const values = previewValues(
+    preview({ template_params: ["A", "B", "C", "D", "E"] }),
+    "payment_request",
+  );
+  assert.deepEqual(
+    values.map((v) => v.label),
+    ["Customer name", "Invoice number", "Pending amount (₹)", "Payment due date", "UPI ID"],
+  );
+  assert.deepEqual(
+    values.map((v) => v.value),
+    ["A", "B", "C", "D", "E"],
   );
 });
 
@@ -57,7 +91,7 @@ test("test send is only available when the server says so", () => {
 test("all six statuses have the agreed labels", () => {
   assert.deepEqual(phaseLabels, {
     ready: "Ready",
-    preparing: "Preparing invoice",
+    preparing: "Preparing",
     sending: "Sending",
     accepted: "Accepted by AiSensy",
     failed: "Failed",

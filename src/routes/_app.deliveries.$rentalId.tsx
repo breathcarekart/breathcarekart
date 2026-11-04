@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import {
   ArrowLeft,
+  BellRing,
   Camera,
   Check,
   CheckCircle2,
@@ -10,11 +11,14 @@ import {
   ImageIcon,
   Loader2,
   MapPin,
+  MessageCircle,
   Phone,
   Truck,
   UserRound,
 } from "lucide-react";
 import { useRef, useState } from "react";
+import { WhatsAppHistory } from "@/components/invoices/whatsapp-history";
+import { WhatsAppSendDialog } from "@/components/invoices/whatsapp-send-dialog";
 import {
   RenewRentalDialog,
   ReturnRentalDialog,
@@ -117,6 +121,8 @@ function Delivery({ rental }: { rental: RentalDetail }) {
   const [viewing, setViewing] = useState<string | null>(null);
   const [renewing, setRenewing] = useState<RentalRef | null>(null);
   const [returning, setReturning] = useState<RentalRef | null>(null);
+  const [confirmationOpen, setConfirmationOpen] = useState(false);
+  const [reminderOpen, setReminderOpen] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
   const delivery = asDeliveryStatus(rental.delivery_status);
@@ -176,8 +182,24 @@ function Delivery({ rental }: { rental: RentalDetail }) {
               label={rentalStageLabels[stage]}
               className="text-sm"
             />
+            {office && rental.status !== "cancelled" && (
+              <Button
+                variant="outline"
+                className="rounded-xl"
+                onClick={() => setConfirmationOpen(true)}
+              >
+                <MessageCircle className="size-4" /> Booking confirmation
+              </Button>
+            )}
             {office && open && (
               <>
+                <Button
+                  variant="outline"
+                  className="rounded-xl"
+                  onClick={() => setReminderOpen(true)}
+                >
+                  <BellRing className="size-4" /> Return reminder
+                </Button>
                 <Button
                   variant="outline"
                   className="rounded-xl"
@@ -507,6 +529,8 @@ function Delivery({ rental }: { rental: RentalDetail }) {
               </p>
             ) : null}
           </Card>
+
+          {office && <WhatsAppHistory target={{ rentalId: rental.id }} />}
         </div>
 
         <Card className="h-fit gap-0 p-6 shadow-xs lg:sticky lg:top-24">
@@ -568,6 +592,41 @@ function Delivery({ rental }: { rental: RentalDetail }) {
       <PhotoDialog path={viewing} onClose={() => setViewing(null)} title={rental.rental_number} />
       <RenewRentalDialog rental={renewing} onClose={() => setRenewing(null)} />
       <ReturnRentalDialog rental={returning} onClose={() => setReturning(null)} />
+      {office && (
+        <>
+          <WhatsAppSendDialog
+            open={confirmationOpen}
+            onOpenChange={setConfirmationOpen}
+            template="rental_booking_confirmation"
+            subjectId={rental.id}
+            customerName={customer?.name ?? "Customer"}
+            phone={customer?.whatsapp || customer?.phone || null}
+            summary={[
+              { label: "Rental", value: rental.rental_number },
+              {
+                label: "Rental period",
+                value: `${formatDate(rental.start_date)} → ${formatDate(rental.due_date)}`,
+              },
+            ]}
+            blockedReason={rental.status === "cancelled" ? "This rental was cancelled." : null}
+            fallbackMessage={`Your rental ${rental.rental_number} with Breath Care Kart is confirmed.`}
+          />
+          <WhatsAppSendDialog
+            open={reminderOpen}
+            onOpenChange={setReminderOpen}
+            template="return_or_renew_reminder"
+            subjectId={rental.id}
+            customerName={customer?.name ?? "Customer"}
+            phone={customer?.whatsapp || customer?.phone || null}
+            summary={[
+              { label: "Rental", value: rental.rental_number },
+              { label: "Due date", value: formatDate(rental.due_date) },
+            ]}
+            blockedReason={open ? null : "This rental has already been returned."}
+            fallbackMessage={`A reminder from Breath Care Kart: your rental ${rental.rental_number} is due on ${formatDate(rental.due_date)}.`}
+          />
+        </>
+      )}
     </div>
   );
 }

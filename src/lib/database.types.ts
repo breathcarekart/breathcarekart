@@ -63,7 +63,9 @@ export type Database = {
           id: boolean
           invoice_prefix: string
           invoice_terms: string | null
+          payment_qr_path: string | null
           phone: string | null
+          upi_id: string | null
           updated_at: string
           updated_by: string | null
         }
@@ -79,7 +81,9 @@ export type Database = {
           id?: boolean
           invoice_prefix?: string
           invoice_terms?: string | null
+          payment_qr_path?: string | null
           phone?: string | null
+          upi_id?: string | null
           updated_at?: string
           updated_by?: string | null
         }
@@ -94,7 +98,9 @@ export type Database = {
           id?: boolean
           invoice_prefix?: string
           invoice_terms?: string | null
+          payment_qr_path?: string | null
           phone?: string | null
+          upi_id?: string | null
           updated_at?: string
           updated_by?: string | null
         }
@@ -852,13 +858,14 @@ export type Database = {
           destination: string
           error_message: string | null
           id: string
-          invoice_id: string
+          invoice_id: string | null
           is_resend: boolean
           media_filename: string | null
           media_path: string | null
           mode: string
           provider_http_status: number | null
           provider_response: Json | null
+          rental_id: string | null
           requested_by: string
           status: string
           template_params: Json
@@ -873,13 +880,14 @@ export type Database = {
           destination: string
           error_message?: string | null
           id?: string
-          invoice_id: string
+          invoice_id?: string | null
           is_resend?: boolean
           media_filename?: string | null
           media_path?: string | null
           mode: string
           provider_http_status?: number | null
           provider_response?: Json | null
+          rental_id?: string | null
           requested_by: string
           status?: string
           template_params?: Json
@@ -893,13 +901,14 @@ export type Database = {
           destination?: string
           error_message?: string | null
           id?: string
-          invoice_id?: string
+          invoice_id?: string | null
           is_resend?: boolean
           media_filename?: string | null
           media_path?: string | null
           mode?: string
           provider_http_status?: number | null
           provider_response?: Json | null
+          rental_id?: string | null
           requested_by?: string
           status?: string
           template_params?: Json
@@ -918,6 +927,13 @@ export type Database = {
             columns: ["invoice_id"]
             isOneToOne: false
             referencedRelation: "invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "whatsapp_messages_rental_id_fkey"
+            columns: ["rental_id"]
+            isOneToOne: false
+            referencedRelation: "rentals"
             referencedColumns: ["id"]
           },
           {

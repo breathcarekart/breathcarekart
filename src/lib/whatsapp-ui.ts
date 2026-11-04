@@ -1,5 +1,5 @@
-// What the invoice WhatsApp screens show: send modes, statuses, safe error messages and
-// when a retry is allowed. The rules themselves (who may send, duplicate protection,
+// What the WhatsApp screens show: templates, send modes, statuses, safe error messages
+// and when a retry is allowed. The rules themselves (who may send, duplicate protection,
 // live gating) live in the send-invoice-whatsapp Edge Function; this only describes
 // its answers to staff.
 //
@@ -7,24 +7,73 @@
 import {
   maskPhone,
   normalizeIndianMobile,
+  TEMPLATES,
+  type TemplateName,
 } from "../../supabase/functions/send-invoice-whatsapp/whatsapp.ts";
 
-/** Modes the app can ask for. Live is deliberately not one of them. */
-export type WhatsAppSendMode = "dry_run" | "test";
+export { TEMPLATES, type TemplateName };
+
+/**
+ * dry_run: prepared and checked, nothing sent. test: to the internal test number only.
+ * live: to the customer. The server decides which are available; live needs the server's
+ * WHATSAPP_LIVE_ENABLED switch and a verified template.
+ */
+export type WhatsAppSendMode = "dry_run" | "test" | "live";
 export const DEFAULT_SEND_MODE: WhatsAppSendMode = "dry_run";
+
+/** The mode a dialog starts in: send to the customer when the server allows it. */
+export const initialSendMode = (preview: WhatsAppPreview | null | undefined): WhatsAppSendMode =>
+  preview?.modes.live ? "live" : DEFAULT_SEND_MODE;
+
+/** Staff-facing names and descriptions of the approved templates. */
+export const templateInfo: Record<TemplateName, { title: string; action: string; about: string }> =
+  {
+    invoice_send: {
+      title: "Send invoice via WhatsApp",
+      action: "Send invoice",
+      about: "The invoice PDF with its number, date, description and total.",
+    },
+    payment_request: {
+      title: "Send payment reminder",
+      action: "Send reminder",
+      about: "The pending amount, due date, UPI ID and the payment QR code.",
+    },
+    rental_booking_confirmation: {
+      title: "Send booking confirmation",
+      action: "Send confirmation",
+      about: "The equipment, booking, start and due dates and the rental amount.",
+    },
+    return_or_renew_reminder: {
+      title: "Send return reminder",
+      action: "Send reminder",
+      about: "The equipment and due date, with Renew and Return buttons.",
+    },
+  };
 
 // ── Edge Function responses ─────────────────────────────────────────────────
 export type WhatsAppPreview = {
   ok: true;
   action: "preview";
+  template?: TemplateName;
   campaign: string;
   mapping_verified: boolean;
   template_params: string[];
+  param_labels?: string[];
   recipient: { name: string; phone_masked: string };
   test_destination_masked: string | null;
   modes: { dry_run: boolean; test: boolean; live: boolean };
   already_sent: { live: boolean; test: boolean };
-  attachment_filename: string;
+  /** null for templates without an attachment. */
+  attachment_filename: string | null;
+};
+
+/** The message values in placeholder order, with their names, for the review step. */
+export const previewValues = (preview: WhatsAppPreview, template: TemplateName) => {
+  const labels = preview.param_labels ?? (TEMPLATES[template].labels as readonly string[]);
+  return preview.template_params.map((value, i) => ({
+    label: labels[i] ?? `Value ${i + 1}`,
+    value,
+  }));
 };
 
 export type WhatsAppSendResult =
@@ -34,7 +83,7 @@ export type WhatsAppSendResult =
       message_id: string | null;
       note: string;
       destination_masked: string;
-      attachment_filename: string;
+      attachment_filename: string | null;
       pdf_link?: string;
     }
   | {
@@ -44,7 +93,7 @@ export type WhatsAppSendResult =
       mode: WhatsAppSendMode;
       note: string;
       destination_masked: string;
-      attachment_filename: string;
+      attachment_filename: string | null;
     };
 
 // ── Send status shown in the dialog ─────────────────────────────────────────
@@ -52,7 +101,7 @@ export type SendPhase = "ready" | "preparing" | "sending" | "accepted" | "failed
 
 export const phaseLabels: Record<SendPhase, string> = {
   ready: "Ready",
-  preparing: "Preparing invoice",
+  preparing: "Preparing",
   sending: "Sending",
   accepted: "Accepted by AiSensy",
   failed: "Failed",
@@ -83,7 +132,15 @@ export const ACCEPTED_NOTE =
 export const modeLabels: Record<string, string> = {
   dry_run: "Dry run",
   test: "Test send",
-  live: "Live",
+  live: "To customer",
+};
+
+/** History column: which template was sent. */
+export const campaignLabels: Record<string, string> = {
+  invoice_send: "Invoice",
+  payment_request: "Payment reminder",
+  rental_booking_confirmation: "Booking confirmation",
+  return_or_renew_reminder: "Return reminder",
 };
 
 export const historyStatusLabels: Record<string, string> = {
@@ -143,7 +200,7 @@ type ErrorInfo = { message: string; retry: RetryPolicy };
 const errorInfo: Record<string, ErrorInfo> = {
   unauthenticated: { message: "Your session has expired. Sign in again.", retry: "none" },
   forbidden: {
-    message: "Only active admins and telecallers can send invoices on WhatsApp.",
+    message: "Only active admins and telecallers can send WhatsApp messages.",
     retry: "none",
   },
   function_not_deployed: {
@@ -155,7 +212,22 @@ const errorInfo: Record<string, ErrorInfo> = {
     message: "Test sending has no internal test number configured.",
     retry: "none",
   },
-  live_disabled: { message: "Live sending to customers is switched off.", retry: "none" },
+  live_disabled: { message: "Sending to customers is switched off on the server.", retry: "none" },
+  invalid_template: { message: "That message template isn't available.", retry: "none" },
+  rental_not_found: { message: "This rental could not be found.", retry: "none" },
+  rental_closed: {
+    message: "This rental is closed (returned or cancelled), so this message can't be sent.",
+    retry: "none",
+  },
+  nothing_due: { message: "This invoice has nothing left to pay.", retry: "none" },
+  payment_details_missing: {
+    message: "Add the UPI ID and payment QR image in Settings → Business & GST first.",
+    retry: "none",
+  },
+  media_link_unreachable: {
+    message: "The attachment link couldn't be opened, so nothing was sent.",
+    retry: "retry",
+  },
   mapping_unverified: {
     message: "The WhatsApp template mapping hasn't been verified yet.",
     retry: "none",
@@ -244,26 +316,31 @@ export const isOutcomeUnknown = (code: string | null | undefined) =>
 // ── Dialog actions ──────────────────────────────────────────────────────────
 export type ModeOption = { mode: WhatsAppSendMode; available: boolean; reason: string | null };
 
-/** Which modes the dialog can offer, from the server's preview. Live is never offered. */
+/** Which modes the dialog can offer, from the server's preview: customer first. */
 export function modeOptions(preview: WhatsAppPreview | null | undefined): ModeOption[] {
   return [
-    { mode: "dry_run", available: !!preview?.modes.dry_run, reason: null },
+    {
+      mode: "live",
+      available: !!preview?.modes.live,
+      reason: preview?.modes.live ? null : "Sending to customers is switched off on the server.",
+    },
     {
       mode: "test",
       available: !!preview?.modes.test,
       reason: preview?.modes.test ? null : "Test sending isn't configured on the server.",
     },
+    { mode: "dry_run", available: !!preview?.modes.dry_run, reason: null },
   ];
 }
 
-/** A test send after an earlier successful test send needs an explicit "Send Again". */
+/** A send after an earlier successful send in the same mode needs an explicit "Send Again". */
 export const needsResendConfirmation = (
   mode: WhatsAppSendMode,
   preview: WhatsAppPreview | null | undefined,
   lastErrorCode: string | null | undefined,
 ) =>
   mode !== "dry_run" &&
-  (!!preview?.already_sent.test ||
+  (!!(mode === "live" ? preview?.already_sent.live : preview?.already_sent.test) ||
     (lastErrorCode != null && describeSendError(lastErrorCode).retry === "confirm_resend"));
 
 /**

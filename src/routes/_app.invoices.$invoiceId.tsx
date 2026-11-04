@@ -6,6 +6,7 @@ import {
   Download,
   Eye,
   Loader2,
+  BellRing,
   MessageCircle,
   Printer,
   UserRound,
@@ -36,7 +37,7 @@ import { settingsQueries } from "@/lib/db/settings";
 import type { CompanySettings } from "@/lib/db/types";
 import { formatDate, formatDateTime, inr } from "@/lib/format";
 import { buildInvoiceDocument, missingCompanyFields } from "@/lib/invoice-document-data";
-import { downloadInvoicePdf, invoicePdfFilename } from "@/lib/invoice-pdf";
+import { downloadInvoicePdf } from "@/lib/invoice-pdf";
 import { notifyError, notifySuccess } from "@/lib/notify";
 import { isOfficeRole, roleLabel, toRole, useCurrentUser } from "@/lib/roles";
 import {
@@ -86,6 +87,7 @@ function InvoiceDetails({
 }) {
   const { role } = useCurrentUser();
   const [whatsAppOpen, setWhatsAppOpen] = useState(false);
+  const [reminderOpen, setReminderOpen] = useState(false);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const state = paymentState(invoice);
@@ -151,6 +153,15 @@ function InvoiceDetails({
                 <Eye className="size-4" />
               </Link>
             </Button>
+            {canWhatsApp && canTakePayment && (
+              <Button
+                variant="outline"
+                className="rounded-xl"
+                onClick={() => setReminderOpen(true)}
+              >
+                <BellRing className="size-4" /> Payment reminder
+              </Button>
+            )}
             {canWhatsApp && (
               <Button className="rounded-xl" onClick={() => setWhatsAppOpen(true)}>
                 <MessageCircle className="size-4" /> Send via WhatsApp
@@ -359,7 +370,7 @@ function InvoiceDetails({
             )}
           </Card>
 
-          {canWhatsApp && <WhatsAppHistory invoiceId={invoice.id} />}
+          {canWhatsApp && <WhatsAppHistory target={{ invoiceId: invoice.id }} />}
         </div>
 
         <Card className="h-fit gap-0 p-6 shadow-xs">
@@ -403,18 +414,40 @@ function InvoiceDetails({
       </div>
 
       {canWhatsApp && (
-        <WhatsAppSendDialog
-          open={whatsAppOpen}
-          onOpenChange={setWhatsAppOpen}
-          invoiceId={invoice.id}
-          invoiceNumber={invoice.invoice_number}
-          invoiceStatus={invoice.status}
-          total={doc.total}
-          customerName={customer?.name ?? "Customer"}
-          phone={customer?.whatsapp || customer?.phone || null}
-          pdfFilename={invoicePdfFilename(invoice.invoice_number)}
-          companyName={doc.company.name}
-        />
+        <>
+          <WhatsAppSendDialog
+            open={whatsAppOpen}
+            onOpenChange={setWhatsAppOpen}
+            template="invoice_send"
+            subjectId={invoice.id}
+            customerName={customer?.name ?? "Customer"}
+            phone={customer?.whatsapp || customer?.phone || null}
+            summary={[
+              { label: "Invoice", value: invoice.invoice_number },
+              { label: "Total", value: inr(doc.total) },
+            ]}
+            blockedReason={
+              invoice.status === "draft" || invoice.status === "cancelled"
+                ? `A ${invoice.status} invoice can't be sent. Issue the invoice first.`
+                : null
+            }
+            fallbackMessage={`Your invoice ${invoice.invoice_number} from ${doc.company.name} is ready.`}
+          />
+          <WhatsAppSendDialog
+            open={reminderOpen}
+            onOpenChange={setReminderOpen}
+            template="payment_request"
+            subjectId={invoice.id}
+            customerName={customer?.name ?? "Customer"}
+            phone={customer?.whatsapp || customer?.phone || null}
+            summary={[
+              { label: "Invoice", value: invoice.invoice_number },
+              { label: "Outstanding", value: inr(outstanding) },
+            ]}
+            blockedReason={canTakePayment ? null : "This invoice has nothing left to pay."}
+            fallbackMessage={`A reminder from ${doc.company.name}: ${inr(outstanding)} is pending on invoice ${invoice.invoice_number}.`}
+          />
+        </>
       )}
       <RecordPaymentDialog
         open={paymentOpen}

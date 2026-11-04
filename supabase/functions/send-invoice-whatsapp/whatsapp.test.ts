@@ -10,11 +10,13 @@ import {
   formatTemplateAmount,
   formatTemplateDate,
   INVOICE_SEND_TEMPLATE,
+  isValidUpiId,
   maskPhone,
   normalizeIndianMobile,
   redactSignedUrl,
   sanitizeProviderResponse,
   sanitizeTemplateValue,
+  TEMPLATES,
 } from "./whatsapp.ts";
 
 // ── Phone numbers ──────────────────────────────────────────────────────────
@@ -119,9 +121,40 @@ test("template parameters follow the single mapping config, in placeholder order
   assert.equal(r.params.length, INVOICE_SEND_TEMPLATE.parameters.length);
 });
 
-test("the mapping is explicitly marked as not yet verified", () => {
-  assert.equal(INVOICE_SEND_TEMPLATE.mappingVerified, false);
+test("the four approved templates: campaign names and placeholder counts match AiSensy", () => {
   assert.equal(INVOICE_SEND_TEMPLATE.campaignName, "invoice_send");
+  const shape = Object.fromEntries(
+    Object.entries(TEMPLATES).map(([k, t]) => [
+      k,
+      [t.campaignName, t.parameters.length, t.labels.length, t.mappingVerified, t.media],
+    ]),
+  );
+  assert.deepEqual(shape, {
+    invoice_send: ["invoice_send", 5, 5, true, "invoice_pdf"],
+    payment_request: ["payment_request", 5, 5, true, "payment_qr"],
+    rental_booking_confirmation: ["rental_booking_confirmation", 6, 6, true, null],
+    return_or_renew_reminder: ["return_or_renew_reminder", 3, 3, true, null],
+  });
+});
+
+test("UPI IDs: name@bank accepted, anything else refused", () => {
+  for (const ok of ["nharinath1993-2@okhdfcbank", "9177821982-1@okbizaxis", "a.b_c@ybl"]) {
+    assert.equal(isValidUpiId(ok), true, ok);
+  }
+  for (const bad of ["", "nobank", "@okhdfc", "name@", "name @bank", "name@bank@x", null]) {
+    assert.equal(isValidUpiId(bad), false, String(bad));
+  }
+});
+
+test("templates without an attachment send no media field", () => {
+  const p = buildCampaignPayload({
+    template: "return_or_renew_reminder",
+    destination: "+919845011223",
+    userName: "Test Customer",
+    templateParams: ["Test Customer", "Item", "02 Dec 2026"],
+  });
+  assert.equal(p.campaignName, "return_or_renew_reminder");
+  assert.ok(!("media" in p));
 });
 
 test("missing values make the parameters invalid instead of sending blanks", () => {

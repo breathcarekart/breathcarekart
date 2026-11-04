@@ -8,6 +8,7 @@ import {
   type Deps,
   type HandlerRequest,
   type LoadedInvoice,
+  type LoadedRental,
   type LogInsert,
   type LogPatch,
   type SendConfig,
@@ -55,6 +56,37 @@ const invoice = (over: Partial<LoadedInvoice> = {}): LoadedInvoice => ({
   ...over,
 });
 
+const RENTAL_ID = "22222222-2222-4222-8222-222222222222";
+
+const rental = (over: Partial<LoadedRental> = {}): LoadedRental => ({
+  id: RENTAL_ID,
+  rental_number: "RNT-0042",
+  status: "active",
+  start_date: "2026-11-03",
+  due_date: "2026-12-02",
+  returned_date: null,
+  customer_id: "cust-1",
+  customer: {
+    id: "cust-1",
+    name: "Test Customer",
+    phone: "98450 11223",
+    whatsapp: null,
+    address: "Street",
+    city: "City",
+  },
+  items: [
+    {
+      description: null,
+      type_name: "Oxygen Concentrator (5L)",
+      quantity: 1,
+      rate: "3500",
+      created_at: "2026-11-03T10:00:00Z",
+    },
+  ],
+  invoice: { invoice_date: "2026-11-02", grand_total: "4130.00" },
+  ...over,
+});
+
 const baseConfig: SendConfig = {
   apiKeyConfigured: true,
   testDestination: "+91 90000 00001",
@@ -68,9 +100,10 @@ type Calls = {
   inserts: LogInsert[];
   updates: { id: string; patch: LogPatch }[];
   uploads: string[];
-  signed: { path: string; seconds: number }[];
+  signed: { path: string; seconds: number; bucket: string }[];
   sends: unknown[];
-  activity: { action: string }[];
+  checks: { url: string; kind: string }[];
+  activity: { action: string; entityType: string; entityId: string }[];
   expired: number;
 };
 
@@ -78,6 +111,8 @@ function setup(
   over: Partial<Deps> = {},
   opts: {
     invoice?: LoadedInvoice | null;
+    rental?: LoadedRental | null;
+    settings?: Record<string, unknown>;
     provider?: ProviderResult;
     role?: string;
     active?: boolean;
@@ -90,6 +125,7 @@ function setup(
     uploads: [],
     signed: [],
     sends: [],
+    checks: [],
     activity: [],
     expired: 0,
   };
@@ -98,6 +134,8 @@ function setup(
     callerProfile: async () => ({ role: opts.role ?? "admin", is_active: opts.active ?? true }),
     loadInvoice: async (id) =>
       id === INVOICE_ID ? (opts.invoice === undefined ? invoice() : opts.invoice) : null,
+    loadRental: async (id) =>
+      id === RENTAL_ID ? (opts.rental === undefined ? rental() : opts.rental) : null,
     loadSettings: async () => ({
       company_name: "Breath Care Kart",
       address: null,
@@ -105,6 +143,9 @@ function setup(
       email: null,
       gstin: null,
       invoice_terms: null,
+      upi_id: "owner-1@okbank",
+      payment_qr_path: "payment-qr/abc123.jpg",
+      ...opts.settings,
     }),
     priorSuccess: async () => false,
     expireStale: async () => {
@@ -126,17 +167,20 @@ function setup(
       calls.uploads.push(path);
       return true;
     },
-    signUrl: async (path, seconds) => {
-      calls.signed.push({ path, seconds });
-      return `https://proj.supabase.co/storage/v1/object/sign/invoice-pdfs/${path}?token=SIGNEDTOKEN`;
+    signUrl: async (bucket, path, seconds) => {
+      calls.signed.push({ path, seconds, bucket });
+      return `https://proj.supabase.co/storage/v1/object/sign/${bucket}/${path}?token=SIGNEDTOKEN`;
     },
-    checkPdfUrl: async () => true,
+    checkMediaUrl: async (url, kind) => {
+      calls.checks.push({ url, kind });
+      return true;
+    },
     sendCampaign: async (payload) => {
       calls.sends.push(payload);
       return opts.provider ?? { kind: "accepted", httpStatus: 200, response: { success: "true" } };
     },
     logActivity: async (e) => {
-      calls.activity.push({ action: e.action });
+      calls.activity.push({ action: e.action, entityType: e.entityType, entityId: e.entityId });
     },
     randomId: () => "rand-uuid",
     now: () => new Date("2026-11-03T06:00:00Z"),
@@ -151,7 +195,12 @@ function setup(
       {
         method: "POST",
         authorization: "Bearer good",
-        body: { invoice_id: INVOICE_ID, ...body },
+        body:
+          typeof body["template"] === "string" &&
+          String(body["template"]).startsWith("r") &&
+          body["template"] !== "invoice_send"
+            ? { rental_id: RENTAL_ID, ...body }
+            : { invoice_id: INVOICE_ID, ...body },
         ...req,
       },
       deps,
@@ -283,7 +332,13 @@ test("dry run: PDF generated, stored privately, link checked, logged as dry_run,
   assert.equal(calls.sends.length, 0);
   assert.equal(calls.claims.length, 0);
   assert.deepEqual(calls.uploads, [`${INVOICE_ID}/rand-uuid.pdf`]);
-  assert.deepEqual(calls.signed, [{ path: `${INVOICE_ID}/rand-uuid.pdf`, seconds: 86400 }]);
+  assert.deepEqual(calls.signed, [
+    { path: `${INVOICE_ID}/rand-uuid.pdf`, seconds: 86400, bucket: "invoice-pdfs" },
+  ]);
+  assert.deepEqual(
+    calls.checks.map((c) => c.kind),
+    ["pdf"],
+  );
   const row = calls.inserts[0]!;
   assert.equal(row.mode, "dry_run");
   assert.equal(row.status, "dry_run");
@@ -296,7 +351,7 @@ test("dry run: PDF generated, stored privately, link checked, logged as dry_run,
   );
   const shown = JSON.stringify(r.body["payload"]);
   assert.ok(!shown.includes("SIGNEDTOKEN") && !shown.includes("apiKey"), shown);
-  assert.equal(r.body["mapping_verified"], false);
+  assert.equal(r.body["mapping_verified"], true);
 });
 
 test("dry run needs no API key", async () => {
@@ -333,15 +388,26 @@ test("test mode refuses to run without a valid test number or API key", async ()
 });
 
 // ── Live mode ──────────────────────────────────────────────────────────────
-test("live mode stays disabled: switched off by default, and blocked while the mapping is unverified", async () => {
-  const { run, calls } = setup();
-  const off = await run({ mode: "live" });
-  assert.equal(off.status, 403);
-  assert.equal(code(off), "live_disabled");
-  const unverified = await run({ mode: "live" }, { liveEnabled: true });
-  assert.equal(unverified.status, 403);
-  assert.equal(code(unverified), "mapping_unverified");
-  assert.equal(calls.sends.length + calls.claims.length + calls.uploads.length, 0);
+test("live mode is off unless the server switch is on; then it sends to the customer's number", async () => {
+  const off = setup();
+  const r1 = await off.run({ mode: "live" });
+  assert.equal(r1.status, 403);
+  assert.equal(code(r1), "live_disabled");
+  assert.equal(off.calls.sends.length + off.calls.claims.length + off.calls.uploads.length, 0);
+
+  const on = setup();
+  const r2 = await on.run({ mode: "live" }, { liveEnabled: true });
+  assert.equal(r2.status, 200);
+  assert.equal(r2.body["status"], "accepted");
+  assert.equal(on.calls.claims[0]!.mode, "live");
+  assert.equal(on.calls.claims[0]!.destination, "+919845011223");
+  assert.equal((on.calls.sends[0] as { destination: string }).destination, "+919845011223");
+
+  // Without an API key nothing can go out, even with the switch on.
+  const noKey = setup();
+  const r3 = await noKey.run({ mode: "live" }, { liveEnabled: true, apiKeyConfigured: false });
+  assert.equal(code(r3), "not_configured");
+  assert.equal(noKey.calls.sends.length, 0);
 });
 
 // ── Duplicates and resends ─────────────────────────────────────────────────
@@ -451,7 +517,7 @@ test("PDF, storage, signed-URL and link-check failures stop the send and are log
     ],
     [{ uploadPdf: async () => false }, "storage_failed"],
     [{ signUrl: async () => null }, "signed_url_failed"],
-    [{ checkPdfUrl: async () => false }, "pdf_link_unreachable"],
+    [{ checkMediaUrl: async () => false }, "media_link_unreachable"],
   ];
   for (const [over, expected] of cases) {
     const { run, calls } = setup(over);
@@ -475,7 +541,7 @@ test("an unexpected error never leaves a row stuck in 'sending'", async () => {
 
 // ── Preview ────────────────────────────────────────────────────────────────
 test("preview shows the values and availability without writing, rendering or sending anything", async () => {
-  const { run, calls } = setup({ priorSuccess: async (_id, mode) => mode === "test" });
+  const { run, calls } = setup({ priorSuccess: async (_key, _campaign, mode) => mode === "test" });
   const r = await run({ action: "preview", mode: "live" });
   assert.equal(r.status, 200);
   assert.deepEqual(r.body["template_params"], [
@@ -492,4 +558,128 @@ test("preview shows the values and availability without writing, rendering or se
     calls.inserts.length + calls.claims.length + calls.uploads.length + calls.sends.length,
     0,
   );
+});
+
+// ── payment_request ────────────────────────────────────────────────────────
+test("payment_request: pending amount, due date and UPI ID in placeholder order, QR image attached", async () => {
+  const { run, calls } = setup({}, { invoice: invoice({ amount_paid: "4750.00" }) });
+  const r = await run({ template: "payment_request", mode: "test" });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const sent = calls.sends[0] as {
+    campaignName: string;
+    templateParams: string[];
+    media: { url: string; filename: string };
+  };
+  assert.equal(sent.campaignName, "payment_request");
+  assert.deepEqual(sent.templateParams, [
+    "Test Customer",
+    "BCK/2026/0001",
+    "10,000.00",
+    "10 Nov 2026",
+    "owner-1@okbank",
+  ]);
+  assert.equal(sent.media.filename, "payment-qr.jpg");
+  assert.deepEqual(
+    calls.signed.map((x) => [x.bucket, x.path]),
+    [["business-assets", "payment-qr/abc123.jpg"]],
+  );
+  assert.deepEqual(
+    calls.checks.map((c) => c.kind),
+    ["image"],
+  );
+  assert.equal(calls.uploads.length, 0, "no invoice PDF is generated for a payment request");
+  assert.equal(calls.claims[0]!.campaign_name, "payment_request");
+  assert.equal(calls.claims[0]!.invoice_id, INVOICE_ID);
+  assert.equal(calls.claims[0]!.rental_id, null);
+});
+
+test("payment_request is refused when nothing is due or the payment details are missing", async () => {
+  const paid = setup({}, { invoice: invoice({ amount_paid: "14750.00" }) });
+  assert.equal(code(await paid.run({ template: "payment_request", mode: "test" })), "nothing_due");
+  for (const settings of [{ upi_id: null }, { upi_id: "not a upi" }, { payment_qr_path: null }]) {
+    const s = setup({}, { settings });
+    const r = await s.run({ template: "payment_request", mode: "test" });
+    assert.equal(code(r), "payment_details_missing", JSON.stringify(settings));
+    assert.equal(s.calls.sends.length + s.calls.claims.length, 0);
+  }
+});
+
+// ── rental templates ───────────────────────────────────────────────────────
+test("rental_booking_confirmation: six values from the rental and its invoice, no attachment", async () => {
+  const { run, calls } = setup();
+  const r = await run({ template: "rental_booking_confirmation", mode: "test" });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const sent = calls.sends[0] as {
+    campaignName: string;
+    templateParams: string[];
+    media?: unknown;
+  };
+  assert.equal(sent.campaignName, "rental_booking_confirmation");
+  assert.deepEqual(sent.templateParams, [
+    "Test Customer",
+    "Oxygen Concentrator (5L)",
+    "02 Nov 2026",
+    "03 Nov 2026",
+    "02 Dec 2026",
+    "4,130.00",
+  ]);
+  assert.equal(sent.media, undefined);
+  assert.equal(calls.signed.length + calls.uploads.length + calls.checks.length, 0);
+  assert.equal(calls.claims[0]!.rental_id, RENTAL_ID);
+  assert.equal(calls.claims[0]!.invoice_id, null);
+  assert.deepEqual(
+    calls.activity.map((a) => a.entityType),
+    ["rental"],
+  );
+});
+
+test("a register rental without an invoice uses the item rates and the start date", async () => {
+  const { run, calls } = setup({}, { rental: rental({ invoice: null }) });
+  const r = await run({ template: "rental_booking_confirmation", mode: "dry_run" });
+  assert.equal(r.status, 200);
+  const params = calls.inserts[0]!.template_params;
+  assert.equal(params[2], "03 Nov 2026");
+  assert.equal(params[5], "3,500.00");
+});
+
+test("return_or_renew_reminder: three values; refused for returned or cancelled rentals", async () => {
+  const { run, calls } = setup();
+  const r = await run({ template: "return_or_renew_reminder", mode: "test" });
+  assert.equal(r.status, 200);
+  assert.deepEqual((calls.sends[0] as { templateParams: string[] }).templateParams, [
+    "Test Customer",
+    "Oxygen Concentrator (5L)",
+    "02 Dec 2026",
+  ]);
+  for (const status of ["returned", "cancelled"]) {
+    const s = setup({}, { rental: rental({ status }) });
+    const res = await s.run({ template: "return_or_renew_reminder", mode: "test" });
+    assert.equal(code(res), "rental_closed", status);
+    assert.equal(s.calls.sends.length, 0);
+  }
+});
+
+test("unknown templates and the wrong kind of record are refused", async () => {
+  const { run } = setup();
+  assert.equal(
+    code(await run({ template: "marketing_blast", mode: "dry_run" })),
+    "invalid_template",
+  );
+  // A rental template needs a rental id; a missing or invoice-style body is refused.
+  const r = await run({ template: "return_or_renew_reminder", rental_id: "", mode: "dry_run" });
+  assert.equal(code(r), "invalid_input");
+});
+
+test("browser-supplied values are ignored for rental templates too", async () => {
+  const { run, calls } = setup();
+  await run({
+    template: "rental_booking_confirmation",
+    mode: "test",
+    customer_name: "Someone Else",
+    destination: "+919999999999",
+    rental_amount: "1",
+  });
+  const sent = calls.sends[0] as { destination: string; templateParams: string[] };
+  assert.equal(sent.destination, "+919000000001");
+  assert.ok(!sent.templateParams.includes("Someone Else") && !sent.templateParams.includes("1"));
 });

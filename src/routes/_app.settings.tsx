@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { Loader2, Save } from "lucide-react";
-import { cloneElement, useId, useState } from "react";
+import { ImageUp, Loader2, QrCode, Save } from "lucide-react";
+import { cloneElement, useId, useRef, useState } from "react";
 import { CardsSkeleton } from "@/components/shared/loaders";
 import { PasswordForm } from "@/components/profile/password-form";
 import { PageHeader } from "@/components/shared/page-header";
@@ -23,11 +23,17 @@ import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { queryKeys } from "@/lib/db/query-keys";
-import { settingsQueries, updateCompanySettings } from "@/lib/db/settings";
+import {
+  paymentQrUrl,
+  settingsQueries,
+  updateCompanySettings,
+  uploadPaymentQr,
+} from "@/lib/db/settings";
 import type { CompanySettings } from "@/lib/db/types";
 import { formatDateTime, isValidPhone } from "@/lib/format";
 import { checkGstin, GST_RATES } from "@/lib/gst";
 import { notifyError, notifySuccess } from "@/lib/notify";
+import { isValidUpiId } from "../../supabase/functions/send-invoice-whatsapp/whatsapp.ts";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_app/settings")({
@@ -137,6 +143,23 @@ function CompanyForm({ settings }: { settings: CompanySettings }) {
   const [signatory, setSignatory] = useState(settings.authorised_signatory ?? "");
   const [prefix, setPrefix] = useState(settings.invoice_prefix);
   const [terms, setTerms] = useState(settings.invoice_terms ?? "");
+  const [upiId, setUpiId] = useState(settings.upi_id ?? "");
+  const [qrPath, setQrPath] = useState(settings.payment_qr_path ?? null);
+  const qrInput = useRef<HTMLInputElement>(null);
+  const qrPreview = useQuery({
+    queryKey: ["settings", "payment-qr", qrPath],
+    queryFn: () => paymentQrUrl(qrPath!),
+    enabled: !!qrPath,
+    staleTime: 5 * 60_000,
+  });
+  const qrUpload = useMutation({
+    mutationFn: uploadPaymentQr,
+    onSuccess: (path) => {
+      setQrPath(path);
+      notifySuccess("QR image uploaded", "Save changes to use it in payment reminders.");
+    },
+    onError: (error) => notifyError(error, "QR image not uploaded"),
+  });
 
   const gstinCheck = checkGstin(gstin);
   const errors = {
@@ -149,6 +172,7 @@ function CompanyForm({ settings }: { settings: CompanySettings }) {
     // Not registered: no GSTIN is needed (and none is saved).
     gstin: registered && !gstinCheck.ok ? gstinCheck.message : null,
     signatory: signatory.trim() && signatory.trim().length < 2 ? "Enter the full name" : null,
+    upi: upiId.trim() && !isValidUpiId(upiId) ? "Enter a UPI ID like name@bank" : null,
     prefix: !/^[A-Za-z0-9-]{1,12}$/.test(prefix.trim()) ? "1–12 letters, numbers or dashes" : null,
   };
   const valid = Object.values(errors).every((e) => !e);
@@ -165,6 +189,8 @@ function CompanyForm({ settings }: { settings: CompanySettings }) {
         gstin: registered && gstinCheck.ok ? gstinCheck.gstin : null,
         default_gst_rate: defaultRate === NO_DEFAULT_RATE ? null : Number(defaultRate),
         authorised_signatory: signatory.trim() || null,
+        upi_id: upiId.trim() || null,
+        payment_qr_path: qrPath,
         invoice_prefix: prefix.trim(),
         invoice_terms: terms.trim() || null,
       }),
@@ -324,6 +350,75 @@ function CompanyForm({ settings }: { settings: CompanySettings }) {
             <p id="default-gst-rate-hint" className="text-xs text-muted-foreground">
               Pre-selected on new invoices. Staff can still change it per invoice.
             </p>
+          </div>
+        </div>
+      </Card>
+
+      <Card className="gap-0 p-6 shadow-xs">
+        <h2 className="text-base font-semibold">Payments</h2>
+        <p className="text-sm text-muted-foreground">
+          Sent in WhatsApp payment reminders. The QR code and the UPI ID should be for the same
+          account.
+        </p>
+        <Separator className="my-5" />
+        <div className="grid gap-5 sm:grid-cols-[1fr_auto] sm:items-start">
+          <Field
+            label="UPI ID"
+            hint="Printed in payment reminders, e.g. name@bank."
+            error={errors.upi}
+          >
+            <Input
+              value={upiId}
+              onChange={(e) => setUpiId(e.target.value)}
+              autoComplete="off"
+              spellCheck={false}
+              className="h-10 rounded-xl font-mono"
+            />
+          </Field>
+          <div className="space-y-2">
+            <Label className="text-sm">Payment QR image</Label>
+            <div className="flex items-center gap-3">
+              <span className="flex size-24 items-center justify-center overflow-hidden rounded-xl border bg-muted/40">
+                {qrPreview.data ? (
+                  <img
+                    src={qrPreview.data}
+                    alt="Payment QR code"
+                    className="size-full object-contain"
+                  />
+                ) : (
+                  <QrCode className="size-8 text-muted-foreground" />
+                )}
+              </span>
+              <div className="space-y-1.5">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="rounded-lg"
+                  disabled={qrUpload.isPending}
+                  onClick={() => qrInput.current?.click()}
+                >
+                  {qrUpload.isPending ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <ImageUp className="size-4" />
+                  )}{" "}
+                  {qrPath ? "Replace image" : "Upload image"}
+                </Button>
+                <p className="text-xs text-muted-foreground">PNG, JPG or WebP, up to 2 MB.</p>
+              </div>
+              <input
+                ref={qrInput}
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (file) qrUpload.mutate(file);
+                }}
+              />
+            </div>
           </div>
         </div>
       </Card>

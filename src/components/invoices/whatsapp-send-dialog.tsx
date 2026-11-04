@@ -9,6 +9,7 @@ import {
   RefreshCw,
   Send,
   ShieldCheck,
+  UserRound,
   XCircle,
 } from "lucide-react";
 import { useRef, useState } from "react";
@@ -28,29 +29,31 @@ import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { DataError } from "@/lib/db/errors";
 import { queryKeys } from "@/lib/db/query-keys";
-import { inr } from "@/lib/format";
 import { notifySuccess } from "@/lib/notify";
 import { cn } from "@/lib/utils";
 import {
   isWhatsAppConfigured,
-  sendInvoiceWhatsApp,
+  sendWhatsApp,
   whatsAppChatLink,
   whatsAppQueries,
 } from "@/lib/whatsapp";
 import {
   ACCEPTED_NOTE,
   createSendGuard,
-  DEFAULT_SEND_MODE,
   describeSendError,
   inFlightPhase,
+  initialSendMode,
   isOutcomeUnknown,
   maskCustomerPhone,
   modeOptions,
   needsResendConfirmation,
   phaseLabels,
   phaseTones,
+  previewValues,
   resultPhase,
+  templateInfo,
   type SendPhase,
+  type TemplateName,
   type WhatsAppPreview,
   type WhatsAppSendMode,
   type WhatsAppSendResult,
@@ -58,69 +61,83 @@ import {
 
 const errorCodeOf = (error: unknown) => (error instanceof DataError && error.code) || "unexpected";
 
+export type SummaryRow = { label: string; value: string };
+
 /**
- * Sends an invoice on WhatsApp through the server-side integration, after a review and
- * confirmation step. Offers a dry run (default, sends nothing) and a test send to the
- * internal number. Never offers a live send to the customer.
+ * Sends one approved WhatsApp template through the server-side integration, after a
+ * review step that shows exactly what will be sent. When the server allows it, the
+ * default is sending to the customer; a test send and a dry run are also offered.
  */
 export function WhatsAppSendDialog({
   open,
   onOpenChange,
-  invoiceId,
-  invoiceNumber,
-  invoiceStatus,
-  total,
+  template,
+  subjectId,
   customerName,
   phone,
-  pdfFilename,
-  companyName,
+  summary,
+  blockedReason = null,
+  fallbackMessage,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  invoiceId: string;
-  invoiceNumber: string;
-  invoiceStatus: string;
-  total: number;
+  template: TemplateName;
+  /** The invoice id (invoice templates) or rental id (rental templates). */
+  subjectId: string;
   customerName: string;
   phone: string | null;
-  pdfFilename: string;
-  companyName: string;
+  /** Key facts shown above the message, e.g. invoice number and total. */
+  summary: SummaryRow[];
+  /** Why this can't be sent at all (e.g. a draft invoice); nothing is requested then. */
+  blockedReason?: string | null;
+  /** Text for the manual chat link offered while automatic sending is off. */
+  fallbackMessage: string;
 }) {
   const configured = isWhatsAppConfigured();
-  const sendable = invoiceStatus !== "draft" && invoiceStatus !== "cancelled";
+  const subject = { template, id: subjectId };
   const queryClient = useQueryClient();
   const guard = useRef(createSendGuard());
-  const [mode, setMode] = useState<WhatsAppSendMode>(DEFAULT_SEND_MODE);
+  const [chosenMode, setChosenMode] = useState<WhatsAppSendMode | null>(null);
   const [phase, setPhase] = useState<SendPhase>("ready");
   const [result, setResult] = useState<WhatsAppSendResult | null>(null);
   const [errorCode, setErrorCode] = useState<string | null>(null);
   const [resendConfirmed, setResendConfirmed] = useState(false);
-  // A test send whose outcome is unknown (timeout, lost connection) may have reached the
-  // test number. Kept while this page is open, so switching modes or reopening the
-  // dialog doesn't drop the confirmation step; cleared by the next accepted send.
-  const [testOutcomeUnknown, setTestOutcomeUnknown] = useState(false);
+  // A send whose outcome is unknown (timeout, lost connection) may have reached the
+  // recipient. Remembered per mode while this page is open, so switching modes or
+  // reopening the dialog doesn't drop the confirmation step; cleared by the next success.
+  const [outcomeUnknown, setOutcomeUnknown] = useState<Partial<Record<WhatsAppSendMode, true>>>({});
 
   const preview = useQuery({
-    ...whatsAppQueries.preview(invoiceId),
-    enabled: open && configured && sendable,
+    ...whatsAppQueries.preview(subject),
+    enabled: open && configured && !blockedReason,
   });
+  // Until staff pick a mode, start with the customer when the server allows it.
+  const mode = chosenMode ?? initialSendMode(preview.data);
+
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.whatsapp.history(subjectId) });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.whatsapp.preview(subjectId) });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.activity.all });
+  };
 
   const send = useMutation({
     mutationFn: (v: { mode: WhatsAppSendMode; confirmResend: boolean }) =>
-      sendInvoiceWhatsApp(invoiceId, v.mode, v.confirmResend),
+      sendWhatsApp(subject, v.mode, v.confirmResend),
     onMutate: (v) => {
       setPhase(inFlightPhase(v.mode));
       setResult(null);
       setErrorCode(null);
     },
-    onSuccess: (r) => {
+    onSuccess: (r, v) => {
       setPhase(resultPhase(r));
       setResult(r);
       setResendConfirmed(false);
-      if (r.status === "accepted") setTestOutcomeUnknown(false);
+      if (r.status === "accepted") setOutcomeUnknown((u) => ({ ...u, [v.mode]: undefined }));
       notifySuccess(
         r.status === "dry_run" ? "Dry run completed — nothing was sent" : "Accepted by AiSensy",
-        r.status === "dry_run" ? invoiceNumber : "Test send. Not a delivery confirmation.",
+        r.status === "dry_run"
+          ? templateInfo[template].title
+          : `${v.mode === "live" ? "Sent to the customer" : "Test send"}. Not a delivery confirmation.`,
       );
     },
     onError: (error, v) => {
@@ -128,26 +145,26 @@ export function WhatsAppSendDialog({
       setPhase("failed");
       setErrorCode(code);
       setResendConfirmed(false);
-      if (v.mode === "test" && isOutcomeUnknown(code)) setTestOutcomeUnknown(true);
+      if (v.mode !== "dry_run" && isOutcomeUnknown(code)) {
+        setOutcomeUnknown((u) => ({ ...u, [v.mode]: true }));
+      }
     },
     onSettled: () => {
       guard.current.finish();
       // Every attempt is logged on the server, successful or not.
-      void queryClient.invalidateQueries({ queryKey: queryKeys.whatsapp.history(invoiceId) });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.whatsapp.preview(invoiceId) });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.activity.all });
+      invalidate();
     },
   });
 
   const reset = () => {
-    setMode(DEFAULT_SEND_MODE);
+    setChosenMode(null);
     setPhase("ready");
     setResult(null);
     setErrorCode(null);
     setResendConfirmed(false);
   };
 
-  // Start fresh (dry run, Ready) every time the page opens the dialog.
+  // Start fresh every time the page opens the dialog.
   const [wasOpen, setWasOpen] = useState(open);
   if (open !== wasOpen) {
     setWasOpen(open);
@@ -155,16 +172,13 @@ export function WhatsAppSendDialog({
   }
 
   const needsConfirm =
-    needsResendConfirmation(mode, preview.data, errorCode) ||
-    (mode === "test" && testOutcomeUnknown);
+    needsResendConfirmation(mode, preview.data, errorCode) || !!outcomeUnknown[mode];
 
   const submit = () => {
     if (needsConfirm && !resendConfirmed) return;
     if (!guard.current.tryStart()) return;
     send.mutate({ mode, confirmResend: needsConfirm && resendConfirmed });
   };
-
-  const fallbackMessage = `Your invoice ${invoiceNumber} from ${companyName} is ready.`;
 
   return (
     <Dialog
@@ -177,20 +191,18 @@ export function WhatsAppSendDialog({
     >
       <DialogContent className="max-h-[92vh] overflow-y-auto rounded-2xl sm:max-w-lg">
         <WhatsAppSendPanel
+          template={template}
           configured={configured}
-          sendable={sendable}
-          invoiceStatus={invoiceStatus}
+          blockedReason={blockedReason}
           customerName={preview.data?.recipient.name ?? customerName}
           phoneMasked={preview.data?.recipient.phone_masked ?? maskCustomerPhone(phone)}
-          invoiceNumber={invoiceNumber}
-          totalText={inr(total)}
-          pdfFilename={preview.data?.attachment_filename ?? pdfFilename}
+          summary={summary}
           preview={preview.data ?? null}
           previewLoading={preview.isFetching && !preview.data}
           previewErrorCode={preview.error ? errorCodeOf(preview.error) : null}
           mode={mode}
           onModeChange={(m) => {
-            setMode(m);
+            setChosenMode(m);
             setPhase("ready");
             setResult(null);
             setErrorCode(null);
@@ -208,7 +220,7 @@ export function WhatsAppSendDialog({
             setPhase("ready");
             setErrorCode(null);
             void preview.refetch();
-            void queryClient.invalidateQueries({ queryKey: queryKeys.whatsapp.history(invoiceId) });
+            invalidate();
           }}
           onClose={() => onOpenChange(false)}
           chatLink={phone ? whatsAppChatLink(phone, fallbackMessage) : null}
@@ -219,14 +231,12 @@ export function WhatsAppSendDialog({
 }
 
 export type WhatsAppSendPanelProps = {
+  template: TemplateName;
   configured: boolean;
-  sendable: boolean;
-  invoiceStatus: string;
+  blockedReason: string | null;
   customerName: string;
   phoneMasked: string | null;
-  invoiceNumber: string;
-  totalText: string;
-  pdfFilename: string;
+  summary: SummaryRow[];
   preview: WhatsAppPreview | null;
   previewLoading: boolean;
   previewErrorCode: string | null;
@@ -245,13 +255,33 @@ export type WhatsAppSendPanelProps = {
   chatLink: string | null;
 };
 
+const modeText = (p: WhatsAppSendPanelProps, mode: WhatsAppSendMode) =>
+  mode === "live"
+    ? {
+        icon: <UserRound className="size-4" />,
+        title: "Send to customer",
+        description: `Sends this message to ${p.customerName} on ${p.phoneMasked ?? "their number"}.`,
+      }
+    : mode === "test"
+      ? {
+          icon: <FlaskConical className="size-4" />,
+          title: "Test send",
+          description: `Sends only to the internal test number ${p.preview?.test_destination_masked ?? ""}. The customer receives nothing.`,
+        }
+      : {
+          icon: <ShieldCheck className="size-4" />,
+          title: "Dry run",
+          description: "Prepares and checks everything. Nothing is sent to anyone.",
+        };
+
 /** The dialog's contents, driven only by props (no data fetching). */
 export function WhatsAppSendPanel(p: WhatsAppSendPanelProps) {
+  const info = templateInfo[p.template];
   const options = modeOptions(p.preview);
   const selected = options.find((o) => o.mode === p.mode);
   const error = p.errorCode ? describeSendError(p.errorCode) : null;
   const previewError = p.previewErrorCode ? describeSendError(p.previewErrorCode) : null;
-  const ready = p.configured && p.sendable && !!p.preview && !previewError;
+  const ready = p.configured && !p.blockedReason && !!p.preview && !previewError;
   const blocked =
     !ready ||
     !selected?.available ||
@@ -266,7 +296,9 @@ export function WhatsAppSendPanel(p: WhatsAppSendPanelProps) {
         ? "Send Again"
         : error?.retry === "retry"
           ? "Try again"
-          : "Send test";
+          : p.mode === "live"
+            ? "Send to customer"
+            : "Send test";
 
   return (
     <>
@@ -275,42 +307,57 @@ export function WhatsAppSendPanel(p: WhatsAppSendPanelProps) {
           <span className="flex size-8 items-center justify-center rounded-xl bg-success-soft text-success">
             <MessageCircle className="size-4" />
           </span>
-          Send invoice via WhatsApp
+          {info.title}
         </DialogTitle>
-        <DialogDescription>Check the details, choose how to send, then confirm.</DialogDescription>
+        <DialogDescription>{info.about}</DialogDescription>
       </DialogHeader>
 
       <dl className="grid gap-4 rounded-xl border p-4 text-sm sm:grid-cols-2">
         <Field label="Customer" value={p.customerName} />
         <Field label="WhatsApp number" value={p.phoneMasked ?? "No number on file"} />
-        <Field label="Invoice" value={p.invoiceNumber} />
-        <Field label="Total" value={p.totalText} />
-        <div className="min-w-0 sm:col-span-2">
-          <dt className="text-xs uppercase tracking-wide text-muted-foreground">Attachment</dt>
-          <dd className="mt-1 flex items-center gap-1.5 font-medium">
-            <FileText className="size-4 shrink-0 text-muted-foreground" />
-            <span className="truncate">{p.pdfFilename}</span>
-          </dd>
-        </div>
+        {p.summary.map((row) => (
+          <Field key={row.label} label={row.label} value={row.value} />
+        ))}
+        {p.preview?.attachment_filename ? (
+          <div className="min-w-0 sm:col-span-2">
+            <dt className="text-xs uppercase tracking-wide text-muted-foreground">Attachment</dt>
+            <dd className="mt-1 flex items-center gap-1.5 font-medium">
+              <FileText className="size-4 shrink-0 text-muted-foreground" />
+              <span className="truncate">{p.preview.attachment_filename}</span>
+            </dd>
+          </div>
+        ) : null}
       </dl>
 
       {!p.configured ? (
         <PreviewNotice>
           WhatsApp sending isn't switched on for this environment, so nothing will be sent from
-          here. You can open a chat and send the invoice yourself.
+          here. You can open a chat and send the message yourself.
         </PreviewNotice>
-      ) : !p.sendable ? (
-        <Notice tone="warning">
-          A {p.invoiceStatus} invoice can't be sent. Issue the invoice first.
-        </Notice>
+      ) : p.blockedReason ? (
+        <Notice tone="warning">{p.blockedReason}</Notice>
       ) : p.previewLoading ? (
         <p className="flex items-center gap-2 rounded-xl bg-muted/60 px-3 py-2.5 text-sm text-muted-foreground">
-          <Loader2 className="size-4 animate-spin" /> Checking the invoice and send options…
+          <Loader2 className="size-4 animate-spin" /> Preparing the message…
         </p>
       ) : previewError ? (
         <Notice tone="danger">{previewError.message}</Notice>
       ) : p.preview ? (
         <>
+          <div className="rounded-xl border bg-muted/30 p-4">
+            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Message values
+            </p>
+            <dl className="space-y-1.5 text-sm">
+              {previewValues(p.preview, p.template).map((v) => (
+                <div key={v.label} className="flex flex-wrap justify-between gap-x-4 gap-y-0.5">
+                  <dt className="text-muted-foreground">{v.label}</dt>
+                  <dd className="min-w-0 break-words text-right font-medium">{v.value}</dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+
           <fieldset className="space-y-2" disabled={p.pending}>
             <legend className="mb-2 text-sm font-medium">How to send</legend>
             <RadioGroup
@@ -318,41 +365,41 @@ export function WhatsAppSendPanel(p: WhatsAppSendPanelProps) {
               onValueChange={(v) => p.onModeChange(v as WhatsAppSendMode)}
               className="gap-2"
             >
-              <ModeChoice
-                value="dry_run"
-                checked={p.mode === "dry_run"}
-                icon={<ShieldCheck className="size-4" />}
-                title="Dry run (default)"
-                description="Generates and checks the PDF. Nothing is sent to anyone."
-              />
-              <ModeChoice
-                value="test"
-                checked={p.mode === "test"}
-                disabled={!options[1]?.available}
-                icon={<FlaskConical className="size-4" />}
-                title="Test send"
-                description={
-                  options[1]?.available
-                    ? `Sends only to the internal test number ${p.preview.test_destination_masked ?? ""}. The customer receives nothing.`
-                    : (options[1]?.reason ?? "")
-                }
-              />
+              {options
+                .filter((o) => o.available || o.mode !== "live")
+                .map((o) => {
+                  const t = modeText(p, o.mode);
+                  return (
+                    <ModeChoice
+                      key={o.mode}
+                      value={o.mode}
+                      checked={p.mode === o.mode}
+                      disabled={!o.available}
+                      icon={t.icon}
+                      title={t.title}
+                      description={o.available ? t.description : (o.reason ?? "")}
+                    />
+                  );
+                })}
             </RadioGroup>
-            <p className="text-xs text-muted-foreground">
-              Live sending to customers is off and can't be started from this screen.
-              {p.preview.mapping_verified ? "" : " The template mapping is still being verified."}
-            </p>
+            {!p.preview.modes.live && (
+              <p className="text-xs text-muted-foreground">
+                Sending to customers is switched off on the server.
+              </p>
+            )}
           </fieldset>
 
-          {p.preview.already_sent.test && p.mode === "test" && p.phase === "ready" && (
-            <Notice tone="warning">
-              A test send for this invoice was already accepted by AiSensy.
-            </Notice>
-          )}
+          {p.mode !== "dry_run" &&
+            p.phase === "ready" &&
+            (p.mode === "live" ? p.preview.already_sent.live : p.preview.already_sent.test) && (
+              <Notice tone="warning">
+                This message was already sent {p.mode === "live" ? "to the customer" : "as a test"}.
+              </Notice>
+            )}
         </>
       ) : null}
 
-      {p.configured && p.sendable && p.preview && (
+      {ready && (
         <div className="space-y-3 rounded-xl border p-4" aria-live="polite">
           <div className="flex items-center justify-between gap-3">
             <span className="text-sm text-muted-foreground">Status</span>
@@ -367,8 +414,10 @@ export function WhatsAppSendPanel(p: WhatsAppSendPanelProps) {
             <p className="flex items-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="size-4 animate-spin" />
               {p.mode === "dry_run"
-                ? "Preparing the invoice PDF and checking the link…"
-                : "Preparing the invoice and sending it to the test number…"}
+                ? "Preparing the message and checking the attachment…"
+                : p.mode === "live"
+                  ? "Sending to the customer…"
+                  : "Sending to the test number…"}
             </p>
           )}
 
@@ -376,12 +425,12 @@ export function WhatsAppSendPanel(p: WhatsAppSendPanelProps) {
             <div className="space-y-2 text-sm">
               <p className="flex items-start gap-2">
                 <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" />
-                The PDF was generated and checked. Nothing was sent.
+                Everything was prepared and checked. Nothing was sent.
               </p>
               {p.result.pdf_link ? (
                 <Button asChild variant="outline" size="sm" className="rounded-lg">
                   <a href={p.result.pdf_link} target="_blank" rel="noreferrer">
-                    <ExternalLink className="size-4" /> Open generated PDF
+                    <ExternalLink className="size-4" /> Open attachment
                   </a>
                 </Button>
               ) : null}
@@ -392,7 +441,8 @@ export function WhatsAppSendPanel(p: WhatsAppSendPanelProps) {
             <div className="space-y-1 text-sm">
               <p className="flex items-start gap-2">
                 <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" />
-                Test send to {p.result.destination_masked} was accepted by AiSensy.
+                {p.result.mode === "live" ? "Message" : "Test send"} to{" "}
+                {p.result.destination_masked} was accepted by AiSensy.
               </p>
               <p className="text-xs text-muted-foreground">{ACCEPTED_NOTE}</p>
             </div>
@@ -422,7 +472,8 @@ export function WhatsAppSendPanel(p: WhatsAppSendPanelProps) {
                 className="mt-0.5"
               />
               <Label htmlFor="wa-confirm-resend" className="text-sm leading-snug font-normal">
-                I understand this sends the invoice again to the test number.
+                I understand this sends the message again
+                {p.mode === "live" ? " to the customer" : " to the test number"}.
               </Label>
             </div>
           )}

@@ -1,26 +1,75 @@
-// Pure helpers for the invoice WhatsApp message: template mapping, phone numbers,
+// Pure helpers for the WhatsApp messages: template mappings, phone numbers,
 // template parameters and the AiSensy Legacy Campaign payload. No I/O here, so it can be
 // unit-tested with plain `node --test`.
 
 // ============================================================
-// The invoice_send template mapping: the ONE place to change it
+// The approved AiSensy templates: the ONE place to change a mapping
 // ============================================================
-// PROVISIONAL. The approved template shows these five values in this order, but the
-// {{1}}..{{5}} placeholder numbers have not been confirmed in AiSensy's template edit
-// view yet. Live sending is refused until `mappingVerified` is set to true after that
-// check (dry runs and test sends to the internal number are allowed meanwhile).
-export const INVOICE_SEND_TEMPLATE = {
-  campaignName: "invoice_send",
-  mappingVerified: false,
-  /** Position i fills placeholder {{i + 1}}. */
-  parameters: [
-    "customer_name", // {{1}}  Hello [Ramesh Kumar],
-    "invoice_number", // {{2}}  Invoice Number: [INV-1045]
-    "invoice_date", // {{3}}  Invoice Date: [03-Nov-2026]
-    "item_description", // {{4}}  Description: [Oxygen Concentrator (5L) – 7 day rental]
-    "grand_total", // {{5}}  Total Amount: ₹[3500]   (₹ is in the template; send digits only)
-  ],
+// Position i of `parameters` fills placeholder {{i + 1}}. Verified on 04 Nov 2026 against
+// the approved templates in AiSensy (campaign previews). A "₹" shown before a placeholder
+// is part of the template, so amounts are sent as digits only.
+export const TEMPLATES = {
+  invoice_send: {
+    campaignName: "invoice_send",
+    mappingVerified: true,
+    subject: "invoice",
+    media: "invoice_pdf",
+    parameters: [
+      "customer_name",
+      "invoice_number",
+      "invoice_date",
+      "item_description",
+      "grand_total",
+    ],
+    labels: ["Customer name", "Invoice number", "Invoice date", "Description", "Total amount (₹)"],
+  },
+  payment_request: {
+    campaignName: "payment_request",
+    mappingVerified: true,
+    subject: "invoice",
+    media: "payment_qr",
+    parameters: ["customer_name", "invoice_number", "pending_amount", "due_date", "upi_id"],
+    labels: ["Customer name", "Invoice number", "Pending amount (₹)", "Payment due date", "UPI ID"],
+  },
+  rental_booking_confirmation: {
+    campaignName: "rental_booking_confirmation",
+    mappingVerified: true,
+    subject: "rental",
+    media: null,
+    parameters: [
+      "customer_name",
+      "equipment",
+      "booking_date",
+      "start_date",
+      "due_date",
+      "rental_amount",
+    ],
+    labels: [
+      "Customer name",
+      "Equipment",
+      "Booking date",
+      "Rental start date",
+      "Rental due date",
+      "Rental amount (₹)",
+    ],
+  },
+  return_or_renew_reminder: {
+    campaignName: "return_or_renew_reminder",
+    mappingVerified: true,
+    subject: "rental",
+    media: null,
+    parameters: ["customer_name", "equipment", "due_date"],
+    labels: ["Customer name", "Equipment", "Rental due date"],
+  },
 } as const;
+
+export type TemplateName = keyof typeof TEMPLATES;
+export const TEMPLATE_NAMES = Object.keys(TEMPLATES) as TemplateName[];
+export const isTemplateName = (v: unknown): v is TemplateName =>
+  typeof v === "string" && Object.prototype.hasOwnProperty.call(TEMPLATES, v);
+
+/** Kept for existing callers: the invoice template. */
+export const INVOICE_SEND_TEMPLATE = TEMPLATES.invoice_send;
 
 export type TemplateParamKey = (typeof INVOICE_SEND_TEMPLATE.parameters)[number];
 
@@ -122,31 +171,44 @@ export type TemplateInput = {
 };
 
 export type ParamsResult =
-  | { ok: true; params: string[]; values: Record<TemplateParamKey, string> }
-  | { ok: false; message: string };
+  { ok: true; params: string[]; values: Record<string, string> } | { ok: false; message: string };
 
-/** Builds the template parameters in placeholder order from trusted database values. */
-export function buildTemplateParams(input: TemplateInput): ParamsResult {
-  let values: Record<TemplateParamKey, string>;
+/**
+ * Puts named values into the template's placeholder order. Every placeholder must get a
+ * non-empty value: a blank is refused instead of sent.
+ */
+export function orderTemplateParams(
+  template: TemplateName,
+  build: () => Record<string, string>,
+): ParamsResult {
+  let values: Record<string, string>;
   try {
-    values = {
-      customer_name: sanitizeTemplateValue(input.customerName, 100),
-      invoice_number: sanitizeTemplateValue(input.invoiceNumber, 60),
-      invoice_date: formatTemplateDate(input.invoiceDate),
-      item_description: describeItems(input.items),
-      grand_total: formatTemplateAmount(input.grandTotal),
-    };
+    values = build();
   } catch (e) {
-    return { ok: false, message: e instanceof Error ? e.message : "Invalid invoice data" };
+    return { ok: false, message: e instanceof Error ? e.message : "Invalid data" };
   }
-  const params = INVOICE_SEND_TEMPLATE.parameters.map((key) => values[key]);
-  const empty = INVOICE_SEND_TEMPLATE.parameters.filter((key) => !values[key]);
+  const keys = TEMPLATES[template].parameters as readonly string[];
+  const empty = keys.filter((key) => !values[key]);
   if (empty.length) return { ok: false, message: `Missing template value: ${empty.join(", ")}` };
-  if (params.length !== INVOICE_SEND_TEMPLATE.parameters.length) {
-    return { ok: false, message: "Template parameter count does not match the template" };
-  }
-  return { ok: true, params, values };
+  return { ok: true, params: keys.map((key) => values[key]!), values };
 }
+
+/** invoice_send parameters from trusted database values. */
+export const buildTemplateParams = (input: TemplateInput): ParamsResult =>
+  orderTemplateParams("invoice_send", () => ({
+    customer_name: sanitizeTemplateValue(input.customerName, 100),
+    invoice_number: sanitizeTemplateValue(input.invoiceNumber, 60),
+    invoice_date: formatTemplateDate(input.invoiceDate),
+    item_description: describeItems(input.items),
+    grand_total: formatTemplateAmount(input.grandTotal),
+  }));
+
+// ============================================================
+// UPI
+// ============================================================
+/** "name@bank": the format UPI apps accept for a virtual payment address. */
+export const isValidUpiId = (value: string | null | undefined) =>
+  /^[A-Za-z0-9._-]{2,200}@[A-Za-z][A-Za-z0-9.-]{1,63}$/.test((value ?? "").trim());
 
 // ============================================================
 // AiSensy Legacy Campaign API payload
@@ -157,25 +219,30 @@ export type CampaignPayload = {
   destination: string;
   userName: string;
   source: string;
-  media: { url: string; filename: string };
+  /** Only for templates with a document or image header. */
+  media?: { url: string; filename: string };
   templateParams: string[];
 };
 
 export function buildCampaignPayload(args: {
+  template?: TemplateName;
   destination: string;
   userName: string;
-  mediaUrl: string;
-  mediaFilename: string;
+  mediaUrl?: string | null;
+  mediaFilename?: string | null;
   templateParams: string[];
 }): CampaignPayload {
-  return {
-    campaignName: INVOICE_SEND_TEMPLATE.campaignName,
+  const payload: CampaignPayload = {
+    campaignName: TEMPLATES[args.template ?? "invoice_send"].campaignName,
     destination: args.destination,
     userName: sanitizeTemplateValue(args.userName, 100),
     source: AISENSY_SOURCE,
-    media: { url: args.mediaUrl, filename: args.mediaFilename },
     templateParams: args.templateParams,
   };
+  if (args.mediaUrl && args.mediaFilename) {
+    payload.media = { url: args.mediaUrl, filename: args.mediaFilename };
+  }
+  return payload;
 }
 
 // ============================================================

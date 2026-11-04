@@ -561,5 +561,65 @@ check("invoice-pdfs: browser users can't upload", !!r.error, r.error);
 r = await as(U.admin, `delete from storage.objects where bucket_id = 'invoice-pdfs' returning id`);
 check("invoice-pdfs: browser users can't delete", !!r.error || r.rows.length === 0, r.error ?? "0 rows");
 
+// ── WhatsApp templates + payment details (migration 20261104000200_whatsapp_templates) ──
+const waRental = await one(`select id, customer_id from public.rentals order by created_at limit 1`);
+const waRentalInsert = (campaign, mode, status, extra = {}) =>
+  waTry(
+    `insert into public.whatsapp_messages (rental_id, invoice_id, customer_id, campaign_name, mode, status, destination, template_params, requested_by, is_resend)
+     values ($1, $2, $3, $4, $5, $6, '+919000000001', '["a","b","c"]', $7, $8) returning id`,
+    [extra.rental === false ? null : waRental.id, extra.invoice ?? null, waRental.customer_id, campaign, mode, status, U.tele, extra.is_resend ?? false],
+  );
+r = await waRentalInsert("return_or_renew_reminder", "test", "sent");
+check("templates: a rental message is logged against the rental", !!r.rows?.[0]?.id, r.error);
+r = await waRentalInsert("return_or_renew_reminder", "test", "sending");
+check("templates: a second rental reminder after a success needs confirmation", r.hint === "already_sent", r.error);
+r = await waRentalInsert("return_or_renew_reminder", "test", "sent", { is_resend: true });
+check("templates: confirmed resend to a rental is allowed", !!r.rows?.[0]?.id, r.error);
+r = await waRentalInsert("rental_booking_confirmation", "live", "sending");
+const waBooking = r.rows?.[0]?.id;
+check("templates: a different template for the same rental isn't blocked", !!waBooking, r.error);
+r = await waRentalInsert("rental_booking_confirmation", "live", "sending", { is_resend: true });
+check("templates: only one send in progress per rental and template", /duplicate key|one_in_flight_rental/.test(r.error ?? ""), r.error);
+await waTry(`update public.whatsapp_messages set status = 'failed', completed_at = now() where id = $1`, [waBooking]);
+r = await waRentalInsert("invoice_send", "test", "sent");
+check("templates: an invoice template can't point at a rental", /whatsapp_messages_one_subject/.test(r.error ?? ""), r.error);
+r = await waRentalInsert("return_or_renew_reminder", "test", "sent", { rental: false, invoice: waInv.id, is_resend: true });
+check("templates: a rental template can't point at an invoice", /whatsapp_messages_one_subject/.test(r.error ?? ""), r.error);
+r = await waRentalInsert("marketing_blast", "test", "sent", { is_resend: true });
+check("templates: unknown campaign names are refused", /whatsapp_messages_campaign_known/.test(r.error ?? ""), r.error);
+r = await waTry(
+  `insert into public.whatsapp_messages (invoice_id, customer_id, campaign_name, mode, status, destination, requested_by) values ($1, $2, 'payment_request', 'test', 'sent', '+919000000001', $3) returning id`,
+  [waInv.id, waInv.customer_id, U.tele],
+);
+check("templates: payment_request is logged against the invoice", !!r.rows?.[0]?.id, r.error);
+r = await as(U.sup, `select count(*)::int n from public.whatsapp_messages where rental_id is not null`);
+check("templates: supervisor still sees no log entries (rental messages too)", r.rows?.[0]?.n === 0, r.error);
+
+const settingsNow = await one(`select upi_id, payment_qr_path from public.company_settings`);
+check("payments: the client's UPI ID is filled in", settingsNow.upi_id === "nharinath1993-2@okhdfcbank", JSON.stringify(settingsNow));
+r = await as(U.admin, `update public.company_settings set upi_id = 'not a upi'`);
+check("payments: an invalid UPI ID is refused", /company_settings_upi_id_format/.test(r.error ?? ""), r.error);
+r = await as(U.admin, `update public.company_settings set payment_qr_path = '../secret.pdf'`);
+check("payments: the QR path must point inside payment-qr/", /company_settings_payment_qr_path/.test(r.error ?? ""), r.error);
+r = await as(U.admin, `update public.company_settings set payment_qr_path = 'payment-qr/abc.jpg' returning payment_qr_path`);
+check("payments: admin saves the QR image path", r.rows?.[0]?.payment_qr_path === "payment-qr/abc.jpg", r.error);
+r = await as(U.tele, `update public.company_settings set upi_id = 'someone@bank' returning id`);
+check("payments: telecaller can't change the UPI ID", !r.error && r.rows.length === 0, r.error ?? "0 rows");
+
+const assets = await one(`select public, file_size_limit, allowed_mime_types from storage.buckets where id = 'business-assets'`);
+check("business-assets: private, images only, 2 MB", assets?.public === false && Number(assets?.file_size_limit) === 2097152 && JSON.stringify(assets?.allowed_mime_types) === JSON.stringify(["image/png", "image/jpeg", "image/webp"]), JSON.stringify(assets));
+r = await as(U.admin, `insert into storage.objects (bucket_id, name) values ('business-assets', 'payment-qr/admin.jpg') returning name`);
+check("business-assets: admin can upload the QR image", r.rows?.[0]?.name === "payment-qr/admin.jpg", r.error);
+r = await as(U.admin, `insert into storage.objects (bucket_id, name) values ('business-assets', 'elsewhere/x.jpg')`);
+check("business-assets: uploads only go to payment-qr/", !!r.error, r.error);
+r = await as(U.tele, `insert into storage.objects (bucket_id, name) values ('business-assets', 'payment-qr/tele.jpg')`);
+check("business-assets: telecaller can't upload", !!r.error, r.error);
+r = await as(U.tele, `select count(*)::int n from storage.objects where bucket_id = 'business-assets'`);
+check("business-assets: telecaller can read the QR image", r.rows?.[0]?.n === 1, r.error);
+r = await as(U.sup, `select count(*)::int n from storage.objects where bucket_id = 'business-assets'`);
+check("business-assets: supervisor can't see it", r.rows?.[0]?.n === 0, r.error);
+r = await as(null, `select count(*)::int n from storage.objects where bucket_id = 'business-assets'`);
+check("business-assets: signed-out users can't see it", !!r.error || r.rows?.[0]?.n === 0, r.error ?? "0 rows");
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

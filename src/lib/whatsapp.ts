@@ -1,11 +1,11 @@
-// WhatsApp invoice delivery — service boundary.
+// WhatsApp messages — service boundary.
 //
 // Sending happens server-side only: the `send-invoice-whatsapp` Edge Function holds
-// the AiSensy key (never the browser), loads the invoice under the caller's
-// permissions, renders and attaches the PDF, and records every attempt in
-// `whatsapp_messages`. The app only asks for a preview, a dry run or a test send to
-// the internal number; it never asks for a live send. Until the function is
-// deployed and VITE_WHATSAPP_ENABLED=true is set, the app calls nothing.
+// the AiSensy key (never the browser), loads the invoice or rental under the caller's
+// permissions, builds the approved template's values and attachment, and records every
+// attempt in `whatsapp_messages`. Sending to customers works only while the server's
+// WHATSAPP_LIVE_ENABLED switch is on. Until the function is deployed and
+// VITE_WHATSAPP_ENABLED=true is set, the app calls nothing.
 import {
   FunctionsFetchError,
   FunctionsHttpError,
@@ -18,6 +18,8 @@ import { queryKeys } from "@/lib/db/query-keys";
 import { phoneDigits } from "@/lib/format";
 import {
   describeSendError,
+  TEMPLATES,
+  type TemplateName,
   type WhatsAppPreview,
   type WhatsAppSendMode,
   type WhatsAppSendResult,
@@ -71,10 +73,18 @@ async function callFunction<T>(body: Record<string, unknown>): Promise<T> {
   return data;
 }
 
+/** Which message, about which record. Invoice templates take an invoice, rental ones a rental. */
+export type WhatsAppSubject = { template: TemplateName; id: string };
+
+const subjectBody = ({ template, id }: WhatsAppSubject) => ({
+  template,
+  [TEMPLATES[template].subject === "invoice" ? "invoice_id" : "rental_id"]: id,
+});
+
 /** What would be sent: recipient (masked), template values and which modes are available. */
-export async function previewInvoiceWhatsApp(invoiceId: string): Promise<WhatsAppPreview> {
+export async function previewWhatsApp(subject: WhatsAppSubject): Promise<WhatsAppPreview> {
   const data = await callFunction<WhatsAppPreview>({
-    invoice_id: invoiceId,
+    ...subjectBody(subject),
     action: "preview",
     mode: "dry_run",
   });
@@ -83,18 +93,18 @@ export async function previewInvoiceWhatsApp(invoiceId: string): Promise<WhatsAp
 }
 
 /**
- * Runs a dry run (nothing sent) or a test send to the internal number.
- * Never reports success unless the server does.
+ * Runs a dry run (nothing sent), a test send to the internal number, or a send to the
+ * customer. The server decides whether the mode is allowed. Never reports success unless
+ * the server does.
  */
-export async function sendInvoiceWhatsApp(
-  invoiceId: string,
+export async function sendWhatsApp(
+  subject: WhatsAppSubject,
   mode: WhatsAppSendMode,
   confirmResend: boolean,
 ): Promise<WhatsAppSendResult> {
-  // Belt and braces: the type already rules out live, but plain JS callers exist.
-  if (mode !== "dry_run" && mode !== "test") throw sendError("invalid_mode");
+  if (mode !== "dry_run" && mode !== "test" && mode !== "live") throw sendError("invalid_mode");
   const data = await callFunction<WhatsAppSendResult>({
-    invoice_id: invoiceId,
+    ...subjectBody(subject),
     action: "send",
     mode,
     confirm_resend: confirmResend,
@@ -103,17 +113,23 @@ export async function sendInvoiceWhatsApp(
   return data;
 }
 
-/** Send attempts for one invoice, newest first. RLS limits this to admins and telecallers. */
-export async function fetchWhatsAppHistory(invoiceId: string) {
+export type WhatsAppHistoryTarget = { invoiceId: string } | { rentalId: string };
+
+/** Messages for one invoice or rental, newest first. RLS limits this to admins and telecallers. */
+export async function fetchWhatsAppHistory(target: WhatsAppHistoryTarget) {
+  const query = db()
+    .from("whatsapp_messages")
+    .select(
+      `id, campaign_name, mode, status, destination, error_message, is_resend, media_filename,
+      created_at, completed_at,
+      requester:profiles!whatsapp_messages_requested_by_fkey(id, full_name)`,
+    );
   return unwrap(
-    await db()
-      .from("whatsapp_messages")
-      .select(
-        `id, mode, status, destination, error_message, is_resend, media_filename,
-        created_at, completed_at,
-        requester:profiles!whatsapp_messages_requested_by_fkey(id, full_name)`,
-      )
-      .eq("invoice_id", invoiceId)
+    await (
+      "invoiceId" in target
+        ? query.eq("invoice_id", target.invoiceId)
+        : query.eq("rental_id", target.rentalId)
+    )
       .order("created_at", { ascending: false })
       .limit(50),
   );
@@ -121,18 +137,20 @@ export async function fetchWhatsAppHistory(invoiceId: string) {
 
 export type WhatsAppHistoryEntry = Awaited<ReturnType<typeof fetchWhatsAppHistory>>[number];
 
+const targetId = (t: WhatsAppHistoryTarget) => ("invoiceId" in t ? t.invoiceId : t.rentalId);
+
 export const whatsAppQueries = {
-  preview: (invoiceId: string) =>
+  preview: (subject: WhatsAppSubject) =>
     queryOptions({
-      queryKey: queryKeys.whatsapp.preview(invoiceId),
-      queryFn: () => previewInvoiceWhatsApp(invoiceId),
+      queryKey: [...queryKeys.whatsapp.preview(subject.id), subject.template],
+      queryFn: () => previewWhatsApp(subject),
       staleTime: 0,
       retry: false,
     }),
-  history: (invoiceId: string) =>
+  history: (target: WhatsAppHistoryTarget) =>
     queryOptions({
-      queryKey: queryKeys.whatsapp.history(invoiceId),
-      queryFn: () => fetchWhatsAppHistory(invoiceId),
+      queryKey: queryKeys.whatsapp.history(targetId(target)),
+      queryFn: () => fetchWhatsAppHistory(target),
     }),
 };
 

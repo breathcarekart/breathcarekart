@@ -418,3 +418,10 @@ enabled = true
 # session itself and requires an active admin (see supabase/functions/create-staff-user).
 [functions.create-staff-user]
 verify_jwt = false
+
+# Invoice sending on WhatsApp (AiSensy Legacy Campaign API). The function checks the
+# caller's session itself and requires an active admin or telecaller
+# (see supabase/functions/send-invoice-whatsapp). Secrets: AISENSY_API_KEY,
+# WHATSAPP_TEST_DESTINATION, WHATSAPP_LIVE_ENABLED (live stays off unless "true").
+[functions.send-invoice-whatsapp]
+verify_jwt = false

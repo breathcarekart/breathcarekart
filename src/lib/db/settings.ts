@@ -11,7 +11,16 @@ export async function fetchCompanySettings() {
 export async function updateCompanySettings(
   patch: Pick<
     UpdateRow<"company_settings">,
-    "company_name" | "address" | "phone" | "email" | "gstin" | "invoice_prefix" | "invoice_terms"
+    | "company_name"
+    | "address"
+    | "phone"
+    | "email"
+    | "gst_registered"
+    | "gstin"
+    | "default_gst_rate"
+    | "authorised_signatory"
+    | "invoice_prefix"
+    | "invoice_terms"
   >,
 ) {
   return unwrap(await db().from("company_settings").update(patch).eq("id", true).select().single());

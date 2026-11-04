@@ -13,8 +13,10 @@ export type InvoiceDocumentData = {
     phone: string | null;
     email: string | null;
     gstin: string | null;
+    /** Printed under "Authorized Signature" when set. */
+    signatory: string | null;
   };
-  /** "Tax invoice" only when a GSTIN is configured. */
+  /** "Tax invoice" only for a GST-registered business with a GSTIN. */
   title: string;
   number: string;
   state: PaymentState;
@@ -47,7 +49,8 @@ export function buildInvoiceDocument(
 ): InvoiceDocumentData {
   const state = paymentState(invoice);
   const c = invoice.customer;
-  const gstin = settings?.gstin?.trim() || null;
+  // A GSTIN is printed only for a business marked as GST registered.
+  const gstin = (settings?.gst_registered !== false && settings?.gstin?.trim()) || null;
   const notes = [invoice.notes, settings?.invoice_terms]
     .filter((n): n is string => !!n?.trim())
     .join("\n\n");
@@ -59,6 +62,7 @@ export function buildInvoiceDocument(
       phone: settings?.phone ?? null,
       email: settings?.email ?? null,
       gstin,
+      signatory: settings?.authorised_signatory?.trim() || null,
     },
     title: gstin ? "Tax invoice" : "Invoice",
     number: invoice.invoice_number,
@@ -96,11 +100,15 @@ export function buildInvoiceDocument(
   };
 }
 
-/** Company fields a GST invoice needs that aren't filled in yet. */
+/**
+ * Business details an invoice should show that aren't filled in yet. A GSTIN is only
+ * expected when the business is marked as GST registered.
+ */
 export function missingCompanyFields(settings: CompanySettings | null) {
   const missing: string[] = [];
-  if (!settings?.gstin?.trim()) missing.push("GSTIN");
+  if (settings?.gst_registered !== false && !settings?.gstin?.trim()) missing.push("GSTIN");
   if (!settings?.address?.trim()) missing.push("address");
   if (!settings?.phone?.trim()) missing.push("phone");
+  if (!settings?.email?.trim()) missing.push("email");
   return missing;
 }

@@ -260,10 +260,48 @@ r = await as(U.sup, `select count(*)::int n from public.activity_log`);
 check("supervisor can't read activity log", r.rows?.[0]?.n === 0, r.error);
 
 // ── Settings ──────────────────────────────────────────────────────────────
+// Initial business details (migration 20261104000100_initial_business_details)
+const initial = await one(`select company_name, email, gst_registered, gstin, authorised_signatory from public.company_settings`);
+check("business: initial details filled in by the data migration", initial.company_name === "Breath Care Kart" && initial.email === "breathcarekart@gmail.com" && initial.gst_registered === true && initial.gstin === "36AALCG1309A1Z4" && initial.authorised_signatory === "Harinath Neelam", JSON.stringify(initial));
+{
+  const { readFileSync } = await import("node:fs");
+  const dataMigration = readFileSync(new URL("../migrations/20261104000100_initial_business_details.sql", import.meta.url), "utf8");
+  await sys(`update public.company_settings set email = 'changed@business.test', authorised_signatory = 'Someone Else'`);
+  await db.exec(dataMigration);
+  const after = await one(`select email, gstin, authorised_signatory from public.company_settings`);
+  check("business: re-running the data migration never overwrites admin edits", after.email === "changed@business.test" && after.authorised_signatory === "Someone Else" && after.gstin === "36AALCG1309A1Z4", JSON.stringify(after));
+}
 r = await as(U.tele, `update public.company_settings set gstin='X' returning id`);
 check("telecaller cannot edit company settings", !r.error && r.rows.length === 0, r.error ?? "0 rows");
 r = await as(U.admin, `update public.company_settings set invoice_prefix='INV', gstin='29AAAAA0000A1Z5' returning updated_by`);
 check("admin edits settings (stamped)", r.rows?.[0]?.updated_by === U.admin, r.error);
+// Business & GST settings (migration 20261104000000_business_gst_settings)
+const gstOk = "27AAPFU0939F1ZV"; // GSTN's documentation example; test database only
+r = await as(U.admin, `update public.company_settings set gst_registered = true, gstin = $1, default_gst_rate = 18, authorised_signatory = 'Owner Name', email = 'office@business.test' returning gst_registered, gstin, default_gst_rate`, [gstOk]);
+check("gst: admin saves Registered + GSTIN + default rate + signatory", r.rows?.[0]?.gst_registered === true && r.rows?.[0]?.gstin === gstOk && Number(r.rows?.[0]?.default_gst_rate) === 18, r.error);
+r = await as(U.admin, `update public.company_settings set gstin = '27aapfu0939f1zv'`);
+check("gst: badly formatted GSTIN refused by the database", /company_settings_gstin_format/.test(r.error ?? ""), r.error);
+r = await as(U.admin, `update public.company_settings set gstin = null`);
+check("gst: Registered without a GSTIN refused", /company_settings_gst_registration/.test(r.error ?? ""), r.error);
+r = await as(U.admin, `update public.company_settings set default_gst_rate = 40`);
+check("gst: default rate outside the offered rates refused", /company_settings_default_gst_rate/.test(r.error ?? ""), r.error);
+r = await as(U.admin, `update public.company_settings set email = 'not-an-email'`);
+check("gst: invalid business email refused", /company_settings_email_format/.test(r.error ?? ""), r.error);
+r = await as(U.admin, `update public.company_settings set gst_registered = false, gstin = null, default_gst_rate = null returning gst_registered, gstin`);
+check("gst: admin switches to Not registered without a GSTIN", r.rows?.[0]?.gst_registered === false && r.rows?.[0]?.gstin === null, r.error);
+for (const who of ["tele", "sup", "inactive"]) {
+  r = await as(U[who], `update public.company_settings set gst_registered = true, gstin = $1 returning id`, [gstOk]);
+  check(`gst: ${who} can't change GST settings`, !!r.error || r.rows.length === 0, r.error ?? "0 rows");
+}
+r = await as(null, `update public.company_settings set authorised_signatory = 'x' returning id`);
+check("gst: signed-out user can't change settings", !!r.error || r.rows.length === 0, r.error ?? "0 rows");
+r = await as(U.tele, `insert into public.company_settings (id, company_name) values (false, 'x')`);
+check("gst: no second settings row can be added", !!r.error, r.error);
+r = await as(U.sup, `select gst_registered, default_gst_rate from public.company_settings`);
+check("gst: every staff role can read the settings (invoices need them)", r.rows?.length === 1, r.error);
+// Restore what the rest of this file expects.
+await sys(`update public.company_settings set gst_registered = true, gstin = '29AAAAA0000A1Z5', email = null, authorised_signatory = null`);
+
 r = await as(U.tele, `select public.create_invoice($1::jsonb) as res`, [rentalPayload(unitRent, { supervisor_id: null })]);
 inv = r.rows ? await one(`select invoice_number from public.invoices where id=$1`, [r.rows[0].res.invoice_id]) : null;
 check("new prefix used, counter continues", inv?.invoice_number === "INV/2026/0003", r.error ?? inv?.invoice_number);
@@ -437,6 +475,91 @@ check("clean-up: ordinary role changes by the admin still work", r.rows?.[0]?.ro
 await as(U.admin, `update public.profiles set role='telecaller' where id=$1`, [U.tele]);
 r = await as(U.admin, `update public.profiles set role='telecaller' where id=$1`, [CLEAN]);
 check("final state: back to exactly one active admin", !r.error && (await activeAdmins()) === 1 && (await stillActiveAdmin(U.admin)), r.error);
+
+// ── WhatsApp invoice messages (migration 20261103000000_whatsapp_invoice_messages) ──
+// Inserts below run as the database owner, the way the Edge Function's service role writes.
+const waInv = await one(`select id, customer_id from public.invoices order by created_at limit 1`);
+const waTry = async (sql, params = []) => {
+  try {
+    return { rows: (await db.query(sql, params)).rows };
+  } catch (e) {
+    return { error: e.message, hint: e.hint };
+  }
+};
+const waInsert = (mode, status, extra = {}) =>
+  waTry(
+    `insert into public.whatsapp_messages (invoice_id, customer_id, campaign_name, mode, status, destination, template_params, requested_by, is_resend)
+     values ($1, $2, 'invoice_send', $3, $4, $5, $6, $7, $8) returning id`,
+    [waInv.id, waInv.customer_id, mode, status, extra.destination ?? "+919000000001", JSON.stringify(extra.params ?? ["a", "b", "c", "d", "e"]), U.tele, extra.is_resend ?? false],
+  );
+
+check("whatsapp: log table exists with RLS on", (await one(`select relrowsecurity from pg_class where oid = 'public.whatsapp_messages'::regclass`)).relrowsecurity === true);
+
+// Duplicate protection
+r = await waInsert("live", "sending");
+const waFirst = r.rows?.[0]?.id;
+check("whatsapp: first send can start", !!waFirst, r.error);
+r = await waInsert("live", "sending");
+check("whatsapp: a second simultaneous send for the same invoice is refused", /whatsapp_messages_one_in_flight/.test(r.error ?? ""), r.error);
+r = await waInsert("dry_run", "dry_run");
+check("whatsapp: dry runs are never blocked", !!r.rows?.[0]?.id, r.error);
+r = await waTry(`update public.whatsapp_messages set status = 'sent', provider_http_status = 200, completed_at = now() where id = $1 returning updated_at > created_at as touched`, [waFirst]);
+check("whatsapp: send can be marked sent (updated_at maintained)", r.rows?.length === 1, r.error);
+r = await waInsert("live", "sending");
+check("whatsapp: after a successful send, a new send without confirmation is refused", r.hint === "already_sent" && /already sent on WhatsApp/.test(r.error ?? ""), r.error);
+r = await waInsert("live", "sending", { is_resend: true });
+check("whatsapp: confirmed resend is allowed", !!r.rows?.[0]?.id, r.error);
+await waTry(`update public.whatsapp_messages set status = 'failed', error_message = 'test' where id = $1`, [r.rows?.[0]?.id]);
+r = await waInsert("test", "sending");
+check("whatsapp: a test-mode send is not treated as the customer having received it", !!r.rows?.[0]?.id, r.error);
+await waTry(`update public.whatsapp_messages set status = 'failed' where id = $1`, [r.rows?.[0]?.id]);
+
+// Data rules
+r = await waInsert("dry_run", "sent");
+check("whatsapp: a dry run can never be recorded as sent", /whatsapp_messages_status_matches_mode/.test(r.error ?? ""), r.error);
+r = await waInsert("live", "dry_run", { is_resend: true }); // passes the resend guard, so the CHECK is what decides
+check("whatsapp: a live send can't carry dry_run status", /whatsapp_messages_status_matches_mode/.test(r.error ?? ""), r.error);
+r = await waInsert("dry_run", "dry_run", { destination: "9876543210" });
+check("whatsapp: destination must be E.164 (+country code)", /destination/.test(r.error ?? ""), r.error);
+r = await waInsert("dry_run", "dry_run", { params: { not: "an array" } });
+check("whatsapp: template_params must be a list", /template_params/.test(r.error ?? ""), r.error);
+r = await waTry(`delete from public.invoices where id = $1`, [waInv.id]);
+check("whatsapp: an invoice with WhatsApp history can't be deleted (audit kept)", /whatsapp_messages/.test(r.error ?? ""), r.error);
+
+// Who can read and write
+const waTotal = (await one(`select count(*)::int n from public.whatsapp_messages`)).n;
+r = await as(U.tele, `select count(*)::int n from public.whatsapp_messages`);
+check("whatsapp: telecaller reads the log", r.rows?.[0]?.n === waTotal && waTotal > 0, r.error ?? `${r.rows?.[0]?.n}/${waTotal}`);
+r = await as(U.admin, `select count(*)::int n from public.whatsapp_messages`);
+check("whatsapp: admin reads the log", r.rows?.[0]?.n === waTotal, r.error);
+r = await as(U.sup, `select count(*)::int n from public.whatsapp_messages`);
+check("whatsapp: supervisor sees no log entries", r.rows?.[0]?.n === 0, r.error);
+r = await as(U.inactive, `select count(*)::int n from public.whatsapp_messages`);
+check("whatsapp: inactive user sees no log entries", r.rows?.[0]?.n === 0, r.error);
+r = await as(null, `select count(*)::int n from public.whatsapp_messages`);
+check("whatsapp: signed-out user can't read the log", !!r.error || r.rows?.[0]?.n === 0, r.error ?? "0 rows");
+r = await as(U.tele, `insert into public.whatsapp_messages (invoice_id, customer_id, campaign_name, mode, status, destination, requested_by) values ($1, $2, 'invoice_send', 'live', 'sending', '+919000000002', $3)`, [waInv.id, waInv.customer_id, U.tele]);
+check("whatsapp: telecaller can't write log entries from the browser", !!r.error, r.error);
+r = await as(U.admin, `update public.whatsapp_messages set status = 'sent' where id = $1 returning id`, [waFirst]);
+check("whatsapp: admin can't edit log entries from the browser", !!r.error || r.rows.length === 0, r.error ?? "0 rows");
+r = await as(U.admin, `delete from public.whatsapp_messages where id = $1 returning id`, [waFirst]);
+check("whatsapp: admin can't delete log entries from the browser", !!r.error || r.rows.length === 0, r.error ?? "0 rows");
+r = await as(U.tele, `select public.whatsapp_guard_resend()`);
+check("whatsapp: guard function not callable by API users", /permission denied/.test(r.error ?? ""), r.error);
+
+// Private PDF storage
+const waBucket = await one(`select public, file_size_limit, allowed_mime_types from storage.buckets where id = 'invoice-pdfs'`);
+check("invoice-pdfs: bucket is private, PDF only, 5 MB limit", waBucket?.public === false && Number(waBucket?.file_size_limit) === 5242880 && JSON.stringify(waBucket?.allowed_mime_types) === JSON.stringify(["application/pdf"]), JSON.stringify(waBucket));
+check("delivery-photos: still private", (await one(`select public from storage.buckets where id = 'delivery-photos'`))?.public === false);
+await sys(`insert into storage.objects (bucket_id, name) values ('invoice-pdfs', $1)`, [`${waInv.id}/test.pdf`]);
+r = await as(U.tele, `select count(*)::int n from storage.objects where bucket_id = 'invoice-pdfs'`);
+check("invoice-pdfs: telecaller can read stored PDFs", r.rows?.[0]?.n === 1, r.error);
+r = await as(U.sup, `select count(*)::int n from storage.objects where bucket_id = 'invoice-pdfs'`);
+check("invoice-pdfs: supervisor can't see stored PDFs", r.rows?.[0]?.n === 0, r.error);
+r = await as(U.tele, `insert into storage.objects (bucket_id, name) values ('invoice-pdfs', $1)`, [`${waInv.id}/upload.pdf`]);
+check("invoice-pdfs: browser users can't upload", !!r.error, r.error);
+r = await as(U.admin, `delete from storage.objects where bucket_id = 'invoice-pdfs' returning id`);
+check("invoice-pdfs: browser users can't delete", !!r.error || r.rows.length === 0, r.error ?? "0 rows");
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

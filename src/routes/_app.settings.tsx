@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { Loader2, Save } from "lucide-react";
-import { useState } from "react";
+import { cloneElement, useId, useState } from "react";
 import { CardsSkeleton } from "@/components/shared/loaders";
 import { PasswordForm } from "@/components/profile/password-form";
 import { PageHeader } from "@/components/shared/page-header";
@@ -11,6 +11,14 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
@@ -18,7 +26,9 @@ import { queryKeys } from "@/lib/db/query-keys";
 import { settingsQueries, updateCompanySettings } from "@/lib/db/settings";
 import type { CompanySettings } from "@/lib/db/types";
 import { formatDateTime, isValidPhone } from "@/lib/format";
+import { checkGstin, GST_RATES } from "@/lib/gst";
 import { notifyError, notifySuccess } from "@/lib/notify";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_app/settings")({
   head: () => ({
@@ -26,7 +36,8 @@ export const Route = createFileRoute("/_app/settings")({
       { title: "Settings · Breath Care Kart" },
       {
         name: "description",
-        content: "Company details used on invoices, invoice numbering and account security.",
+        content:
+          "Business and GST details used on invoices, invoice numbering and account security.",
       },
     ],
   }),
@@ -42,22 +53,31 @@ function Field({
   label: string;
   hint?: string;
   error?: string | null;
-  children: React.ReactNode;
+  /** One input (or select trigger); it gets the label's id and the hint/error text. */
+  children: React.ReactElement<{ id?: string; "aria-describedby"?: string }>;
 }) {
+  const id = useId();
+  const message = error ?? hint;
   return (
     <div className="space-y-2">
-      <Label className="text-sm">{label}</Label>
-      {children}
-      {error ? (
-        <p className="text-xs text-destructive">{error}</p>
-      ) : hint ? (
-        <p className="text-xs text-muted-foreground">{hint}</p>
+      <Label htmlFor={id} className="text-sm">
+        {label}
+      </Label>
+      {cloneElement(children, {
+        id,
+        ...(message ? { "aria-describedby": `${id}-message` } : {}),
+      })}
+      {message ? (
+        <p
+          id={`${id}-message`}
+          className={cn("text-xs", error ? "text-destructive" : "text-muted-foreground")}
+        >
+          {message}
+        </p>
       ) : null}
     </div>
   );
 }
-
-const GSTIN = /^\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
 
 function SettingsPage() {
   const query = useQuery(settingsQueries.company());
@@ -65,12 +85,12 @@ function SettingsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Settings"
-        description="Company details on invoices, invoice numbering and your password."
+        description="Business and GST details on invoices, invoice numbering and your password."
       />
       <Tabs defaultValue="company">
         <TabsList className="rounded-xl">
           <TabsTrigger value="company" className="rounded-lg">
-            Company &amp; invoicing
+            Business &amp; GST
           </TabsTrigger>
           <TabsTrigger value="security" className="rounded-lg">
             Security
@@ -101,27 +121,38 @@ function SettingsPage() {
   );
 }
 
+const NO_DEFAULT_RATE = "none";
+
 function CompanyForm({ settings }: { settings: CompanySettings }) {
   const queryClient = useQueryClient();
   const [name, setName] = useState(settings.company_name);
   const [phone, setPhone] = useState(settings.phone ?? "");
   const [email, setEmail] = useState(settings.email ?? "");
   const [address, setAddress] = useState(settings.address ?? "");
+  const [registered, setRegistered] = useState(settings.gst_registered);
   const [gstin, setGstin] = useState(settings.gstin ?? "");
+  const [defaultRate, setDefaultRate] = useState(
+    settings.default_gst_rate == null ? NO_DEFAULT_RATE : String(Number(settings.default_gst_rate)),
+  );
+  const [signatory, setSignatory] = useState(settings.authorised_signatory ?? "");
   const [prefix, setPrefix] = useState(settings.invoice_prefix);
   const [terms, setTerms] = useState(settings.invoice_terms ?? "");
 
+  const gstinCheck = checkGstin(gstin);
   const errors = {
-    name: name.trim().length < 2 ? "Enter the company name" : null,
+    name: name.trim().length < 2 ? "Enter the business name" : null,
     phone: phone.trim() && !isValidPhone(phone) ? "Enter a valid phone number" : null,
-    email: email.trim() && !/^\S+@\S+\.\S+$/.test(email.trim()) ? "Enter a valid email" : null,
-    gstin:
-      gstin.trim() && !GSTIN.test(gstin.trim().toUpperCase())
-        ? "GSTIN should be 15 characters, e.g. 29ABCDE1234F1Z5"
+    email:
+      email.trim() && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim())
+        ? "Enter a valid email"
         : null,
+    // Not registered: no GSTIN is needed (and none is saved).
+    gstin: registered && !gstinCheck.ok ? gstinCheck.message : null,
+    signatory: signatory.trim() && signatory.trim().length < 2 ? "Enter the full name" : null,
     prefix: !/^[A-Za-z0-9-]{1,12}$/.test(prefix.trim()) ? "1–12 letters, numbers or dashes" : null,
   };
   const valid = Object.values(errors).every((e) => !e);
+  const clearsGstin = !registered && !!settings.gstin;
 
   const save = useMutation({
     mutationFn: () =>
@@ -130,7 +161,10 @@ function CompanyForm({ settings }: { settings: CompanySettings }) {
         phone: phone.trim() || null,
         email: email.trim() || null,
         address: address.trim() || null,
-        gstin: gstin.trim().toUpperCase() || null,
+        gst_registered: registered,
+        gstin: registered && gstinCheck.ok ? gstinCheck.gstin : null,
+        default_gst_rate: defaultRate === NO_DEFAULT_RATE ? null : Number(defaultRate),
+        authorised_signatory: signatory.trim() || null,
         invoice_prefix: prefix.trim(),
         invoice_terms: terms.trim() || null,
       }),
@@ -151,32 +185,18 @@ function CompanyForm({ settings }: { settings: CompanySettings }) {
       className="space-y-6"
     >
       <Card className="gap-0 p-6 shadow-xs">
-        <h2 className="text-base font-semibold">Company details</h2>
+        <h2 className="text-base font-semibold">Business details</h2>
         <p className="text-sm text-muted-foreground">Printed on every invoice and PDF.</p>
         <Separator className="my-5" />
         <div className="grid gap-5 sm:grid-cols-2">
-          <Field label="Company name *" error={errors.name}>
+          <Field label="Business name *" error={errors.name}>
             <Input
               value={name}
               onChange={(e) => setName(e.target.value)}
               className="h-10 rounded-xl"
             />
           </Field>
-          <Field label="GSTIN" hint="Required for a GST tax invoice." error={errors.gstin}>
-            <Input
-              value={gstin}
-              onChange={(e) => setGstin(e.target.value)}
-              className="h-10 rounded-xl font-mono uppercase"
-            />
-          </Field>
-          <Field label="Contact number" error={errors.phone}>
-            <Input
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              className="h-10 rounded-xl"
-            />
-          </Field>
-          <Field label="Email" error={errors.email}>
+          <Field label="Business email" error={errors.email}>
             <Input
               type="email"
               value={email}
@@ -184,14 +204,126 @@ function CompanyForm({ settings }: { settings: CompanySettings }) {
               className="h-10 rounded-xl"
             />
           </Field>
+          <Field label="Business phone" error={errors.phone}>
+            <Input
+              type="tel"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              className="h-10 rounded-xl"
+            />
+          </Field>
+          <Field
+            label="Authorised signatory"
+            hint="Optional. Printed under “Authorized Signature” on invoices."
+            error={errors.signatory}
+          >
+            <Input
+              value={signatory}
+              onChange={(e) => setSignatory(e.target.value)}
+              className="h-10 rounded-xl"
+            />
+          </Field>
           <div className="sm:col-span-2">
-            <Field label="Registered address">
+            <Field label="Business address">
               <Textarea
                 value={address}
                 onChange={(e) => setAddress(e.target.value)}
                 className="min-h-24 rounded-xl"
               />
             </Field>
+          </div>
+        </div>
+      </Card>
+
+      <Card className="gap-0 p-6 shadow-xs">
+        <h2 className="text-base font-semibold">GST</h2>
+        <p className="text-sm text-muted-foreground">
+          Registered businesses get a “Tax invoice” with the GSTIN printed on it.
+        </p>
+        <Separator className="my-5" />
+        <div className="grid gap-5 sm:grid-cols-2">
+          <div className="space-y-2 sm:col-span-2">
+            <Label className="text-sm">GST registration status</Label>
+            <RadioGroup
+              value={registered ? "registered" : "not_registered"}
+              onValueChange={(v) => setRegistered(v === "registered")}
+              className="grid gap-2 sm:grid-cols-2"
+            >
+              {(
+                [
+                  ["registered", "Registered", "Has a GSTIN. Invoices are titled “Tax invoice”."],
+                  ["not_registered", "Not registered", "No GSTIN. Invoices are titled “Invoice”."],
+                ] as const
+              ).map(([value, title, description]) => (
+                <Label
+                  key={value}
+                  htmlFor={`gst-${value}`}
+                  className={cn(
+                    "flex cursor-pointer items-start gap-3 rounded-xl border p-3 font-normal transition-colors",
+                    (value === "registered") === registered && "border-primary bg-primary-soft/40",
+                  )}
+                >
+                  <RadioGroupItem
+                    id={`gst-${value}`}
+                    value={value}
+                    aria-label={title}
+                    className="mt-0.5"
+                  />
+                  <span className="space-y-0.5">
+                    <span className="block text-sm font-medium">{title}</span>
+                    <span className="block text-xs text-muted-foreground">{description}</span>
+                  </span>
+                </Label>
+              ))}
+            </RadioGroup>
+          </div>
+
+          {registered ? (
+            <Field
+              label="GSTIN *"
+              hint="Format and check character are validated here. This doesn't confirm the registration; check it on the GST portal."
+              error={errors.gstin}
+            >
+              <Input
+                value={gstin}
+                onChange={(e) => setGstin(e.target.value)}
+                maxLength={20}
+                autoComplete="off"
+                spellCheck={false}
+                aria-invalid={!!errors.gstin}
+                className="h-10 rounded-xl font-mono uppercase"
+              />
+            </Field>
+          ) : clearsGstin ? (
+            <PreviewNotice className="self-start sm:col-span-2">
+              The saved GSTIN will be removed when you save, and invoices will stop showing it.
+            </PreviewNotice>
+          ) : null}
+
+          <div className="space-y-2">
+            <Label htmlFor="default-gst-rate" className="text-sm">
+              Default GST rate
+            </Label>
+            <Select value={defaultRate} onValueChange={setDefaultRate}>
+              <SelectTrigger
+                id="default-gst-rate"
+                aria-describedby="default-gst-rate-hint"
+                className="h-10 rounded-xl"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NO_DEFAULT_RATE}>No default (choose per invoice)</SelectItem>
+                {GST_RATES.map((r) => (
+                  <SelectItem key={r} value={r}>
+                    {r}%
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p id="default-gst-rate-hint" className="text-xs text-muted-foreground">
+              Pre-selected on new invoices. Staff can still change it per invoice.
+            </p>
           </div>
         </div>
       </Card>

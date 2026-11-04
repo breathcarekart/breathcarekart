@@ -23,9 +23,11 @@ import { customerQueries } from "@/lib/db/customers";
 import { equipmentQueries, unitLabel } from "@/lib/db/equipment";
 import { createInvoice } from "@/lib/db/invoices";
 import { profileQueries } from "@/lib/db/profiles";
+import { settingsQueries } from "@/lib/db/settings";
 import { workflowKeys } from "@/lib/db/query-keys";
 import type { TransactionType } from "@/lib/db/types";
 import { addMonthsISO, formatDate, inr, todayISO } from "@/lib/format";
+import { GST_RATES, isGstRate } from "@/lib/gst";
 import { notifyError, notifySuccess } from "@/lib/notify";
 import { equipmentStatusLabels, equipmentStatusTone } from "@/lib/status";
 import { cn } from "@/lib/utils";
@@ -51,9 +53,6 @@ export const Route = createFileRoute("/_app/invoices/new")({
   }),
   component: CreateInvoicePage,
 });
-
-/** GST options offered. The right rate depends on each item's HSN code; staff choose per invoice. */
-const GST_RATES = ["0", "5", "12", "18", "28"] as const;
 
 const flowSteps = [
   "Customer",
@@ -115,6 +114,7 @@ function CreateInvoicePage() {
   const customers = useQuery(customerQueries.list());
   const units = useQuery(equipmentQueries.units());
   const staff = useQuery(profileQueries.list());
+  const settings = useQuery(settingsQueries.company());
 
   const [customerId, setCustomerId] = useState(search.customer ?? "");
   const [customerQuery, setCustomerQuery] = useState("");
@@ -131,6 +131,7 @@ function CreateInvoicePage() {
   const [discount, setDiscount] = useState("0");
   const [deposit, setDeposit] = useState("0");
   const [gstRate, setGstRate] = useState<string>("");
+  const [defaultRateApplied, setDefaultRateApplied] = useState(false);
   const [notes, setNotes] = useState("");
 
   const isRental = txType === "rental";
@@ -148,6 +149,16 @@ function CreateInvoicePage() {
     if (u && u.status === "available")
       setLines([{ unitId: u.id, rate: defaultRate(u.id, txType) }]);
   }
+
+  // Pre-select the admin's default GST rate once settings load (staff can still change it).
+  if (!defaultRateApplied && settings.isSuccess) {
+    setDefaultRateApplied(true);
+    const saved = settings.data?.default_gst_rate;
+    const preset = saved == null ? "" : String(Number(saved));
+    if (gstRate === "" && isGstRate(preset)) setGstRate(preset);
+  }
+  // Charging GST normally needs a GST registration; warn, but leave the choice to staff.
+  const unregisteredWithGst = settings.data?.gst_registered === false && Number(gstRate) > 0;
 
   const supervisors = (staff.data ?? []).filter((p) => p.role === "supervisor" && p.is_active);
   const customerMatches = useMemo(() => {
@@ -649,10 +660,18 @@ function CreateInvoicePage() {
                   </SelectContent>
                 </Select>
               </Field>
-              <PreviewNotice className="sm:mt-7">
-                The rate is saved on this invoice. GST differs by equipment (HSN code) and by rental
-                vs sale — confirm the correct rate with your accountant.
-              </PreviewNotice>
+              <div className="space-y-3 sm:mt-7">
+                <PreviewNotice>
+                  The rate is saved on this invoice. GST differs by equipment (HSN code) and by
+                  rental vs sale — confirm the correct rate with your accountant.
+                </PreviewNotice>
+                {unregisteredWithGst && (
+                  <p className="rounded-xl border border-warning/40 bg-warning-soft px-3 py-2 text-xs text-warning-foreground">
+                    The business is set as not registered for GST in Settings, so this invoice won’t
+                    show a GSTIN. Check with your accountant before charging GST.
+                  </p>
+                )}
+              </div>
             </div>
           </SectionCard>
         </div>

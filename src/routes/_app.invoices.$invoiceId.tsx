@@ -12,6 +12,7 @@ import {
   Wallet,
 } from "lucide-react";
 import { useState } from "react";
+import { WhatsAppHistory } from "@/components/invoices/whatsapp-history";
 import { WhatsAppSendDialog } from "@/components/invoices/whatsapp-send-dialog";
 import { RecordPaymentDialog } from "@/components/payments/record-payment-dialog";
 import { RoleBadge, TransactionBadge } from "@/components/shared/badges";
@@ -35,9 +36,9 @@ import { settingsQueries } from "@/lib/db/settings";
 import type { CompanySettings } from "@/lib/db/types";
 import { formatDate, formatDateTime, inr } from "@/lib/format";
 import { buildInvoiceDocument, missingCompanyFields } from "@/lib/invoice-document-data";
-import { downloadInvoicePdf } from "@/lib/invoice-pdf";
+import { downloadInvoicePdf, invoicePdfFilename } from "@/lib/invoice-pdf";
 import { notifyError, notifySuccess } from "@/lib/notify";
-import { roleLabel, toRole, useCurrentUser } from "@/lib/roles";
+import { isOfficeRole, roleLabel, toRole, useCurrentUser } from "@/lib/roles";
 import {
   outstandingOf,
   paymentMethodLabels,
@@ -95,6 +96,8 @@ function InvoiceDetails({
   const customer = invoice.customer;
   const canTakePayment =
     outstanding > 0 && invoice.status !== "cancelled" && invoice.status !== "draft";
+  // The route is office-only already; the Edge Function and RLS enforce it again.
+  const canWhatsApp = isOfficeRole(role);
 
   const downloadPdf = async () => {
     setDownloading(true);
@@ -148,9 +151,11 @@ function InvoiceDetails({
                 <Eye className="size-4" />
               </Link>
             </Button>
-            <Button className="rounded-xl" onClick={() => setWhatsAppOpen(true)}>
-              <MessageCircle className="size-4" /> Send via WhatsApp
-            </Button>
+            {canWhatsApp && (
+              <Button className="rounded-xl" onClick={() => setWhatsAppOpen(true)}>
+                <MessageCircle className="size-4" /> Send via WhatsApp
+              </Button>
+            )}
           </>
         }
       />
@@ -159,8 +164,10 @@ function InvoiceDetails({
         <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-warning/40 bg-warning-soft px-4 py-3 text-sm">
           <AlertTriangle className="size-4 shrink-0 text-warning-foreground" />
           <span className="flex-1">
-            Company {missing.join(", ")} not set — the PDF shows “Invoice” instead of “Tax invoice”
-            until a GSTIN is added.
+            Business {missing.join(", ")} not set in Settings
+            {missing.includes("GSTIN")
+              ? " — the PDF shows “Invoice” instead of “Tax invoice” until a GSTIN is added."
+              : "."}
           </span>
           {role === "admin" && (
             <Button asChild size="sm" variant="outline" className="rounded-lg bg-background">
@@ -351,6 +358,8 @@ function InvoiceDetails({
               </Table>
             )}
           </Card>
+
+          {canWhatsApp && <WhatsAppHistory invoiceId={invoice.id} />}
         </div>
 
         <Card className="h-fit gap-0 p-6 shadow-xs">
@@ -393,15 +402,20 @@ function InvoiceDetails({
         </Card>
       </div>
 
-      <WhatsAppSendDialog
-        open={whatsAppOpen}
-        onOpenChange={setWhatsAppOpen}
-        invoiceId={invoice.id}
-        recipient={customer?.name ?? "Customer"}
-        phone={customer?.whatsapp || customer?.phone || null}
-        invoiceNumber={invoice.invoice_number}
-        companyName={doc.company.name}
-      />
+      {canWhatsApp && (
+        <WhatsAppSendDialog
+          open={whatsAppOpen}
+          onOpenChange={setWhatsAppOpen}
+          invoiceId={invoice.id}
+          invoiceNumber={invoice.invoice_number}
+          invoiceStatus={invoice.status}
+          total={doc.total}
+          customerName={customer?.name ?? "Customer"}
+          phone={customer?.whatsapp || customer?.phone || null}
+          pdfFilename={invoicePdfFilename(invoice.invoice_number)}
+          companyName={doc.company.name}
+        />
+      )}
       <RecordPaymentDialog
         open={paymentOpen}
         onOpenChange={setPaymentOpen}

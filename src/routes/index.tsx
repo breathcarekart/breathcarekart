@@ -16,6 +16,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import loginArt from "@/assets/login-illustration.jpg";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 import { getSession, safeRedirectPath } from "@/lib/auth";
+import { normalizeSignInEmail, signInErrorMessage } from "@/lib/auth-errors";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -70,15 +71,21 @@ function LoginPage() {
       return;
     }
     setLoading(true);
-    const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
-    setLoading(false);
-    if (signInError) {
-      setError(
-        signInError.message === "Invalid login credentials"
-          ? "Incorrect email or password."
-          : signInError.message,
-      );
+    try {
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email: normalizeSignInEmail(email),
+        password,
+      });
+      if (signInError) {
+        setError(signInErrorMessage(signInError));
+        return;
+      }
+    } catch (thrown) {
+      // A failed request can also throw; never leave the button spinning.
+      setError(signInErrorMessage(thrown instanceof Error ? thrown : {}));
       return;
+    } finally {
+      setLoading(false);
     }
     goNext();
   };
@@ -177,7 +184,7 @@ function LoginPage() {
             “Every concentrator, bed and invoice — tracked in one calm workspace.”
           </p>
           <p className="mt-3 text-sm text-muted-foreground">
-            412 assets · 1,280 rentals fulfilled · 99.2% on-time delivery
+            Inventory · Rentals &amp; deliveries · Invoices &amp; payments
           </p>
         </div>
       </div>

@@ -44,6 +44,11 @@ export const queryKeys = {
     all: ["payments"] as const,
     list: () => ["payments", "list"] as const,
   },
+  whatsapp: {
+    all: ["whatsapp"] as const,
+    preview: (invoiceId: string) => ["whatsapp", "preview", invoiceId] as const,
+    history: (invoiceId: string) => ["whatsapp", "history", invoiceId] as const,
+  },
   deliveryPhotos: {
     all: ["delivery-photos"] as const,
     byRental: (rentalId: string) => ["delivery-photos", rentalId] as const,

@@ -54,8 +54,11 @@ export type Database = {
       company_settings: {
         Row: {
           address: string | null
+          authorised_signatory: string | null
           company_name: string
+          default_gst_rate: number | null
           email: string | null
+          gst_registered: boolean
           gstin: string | null
           id: boolean
           invoice_prefix: string
@@ -67,8 +70,11 @@ export type Database = {
         ComputedFields: never
         Insert: {
           address?: string | null
+          authorised_signatory?: string | null
           company_name: string
+          default_gst_rate?: number | null
           email?: string | null
+          gst_registered?: boolean
           gstin?: string | null
           id?: boolean
           invoice_prefix?: string
@@ -79,8 +85,11 @@ export type Database = {
         }
         Update: {
           address?: string | null
+          authorised_signatory?: string | null
           company_name?: string
+          default_gst_rate?: number | null
           email?: string | null
+          gst_registered?: boolean
           gstin?: string | null
           id?: boolean
           invoice_prefix?: string
@@ -830,6 +839,92 @@ export type Database = {
             columns: ["customer_id"]
             isOneToOne: false
             referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      whatsapp_messages: {
+        Row: {
+          campaign_name: string
+          completed_at: string | null
+          created_at: string
+          customer_id: string
+          destination: string
+          error_message: string | null
+          id: string
+          invoice_id: string
+          is_resend: boolean
+          media_filename: string | null
+          media_path: string | null
+          mode: string
+          provider_http_status: number | null
+          provider_response: Json | null
+          requested_by: string
+          status: string
+          template_params: Json
+          updated_at: string
+        }
+        ComputedFields: never
+        Insert: {
+          campaign_name: string
+          completed_at?: string | null
+          created_at?: string
+          customer_id: string
+          destination: string
+          error_message?: string | null
+          id?: string
+          invoice_id: string
+          is_resend?: boolean
+          media_filename?: string | null
+          media_path?: string | null
+          mode: string
+          provider_http_status?: number | null
+          provider_response?: Json | null
+          requested_by: string
+          status?: string
+          template_params?: Json
+          updated_at?: string
+        }
+        Update: {
+          campaign_name?: string
+          completed_at?: string | null
+          created_at?: string
+          customer_id?: string
+          destination?: string
+          error_message?: string | null
+          id?: string
+          invoice_id?: string
+          is_resend?: boolean
+          media_filename?: string | null
+          media_path?: string | null
+          mode?: string
+          provider_http_status?: number | null
+          provider_response?: Json | null
+          requested_by?: string
+          status?: string
+          template_params?: Json
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "whatsapp_messages_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "whatsapp_messages_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "whatsapp_messages_requested_by_fkey"
+            columns: ["requested_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
         ]

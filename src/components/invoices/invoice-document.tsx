@@ -148,6 +148,7 @@ export function InvoiceDocument({ data }: { data: InvoiceDocumentData }) {
         <div className="flex min-h-24 flex-col justify-end text-center">
           <div className="border-b border-invoice-ink" />
           <p className="mt-2 text-xs font-medium">Authorized Signature</p>
+          {company.signatory ? <p className="text-xs">{company.signatory}</p> : null}
           <p className="text-[10px] text-invoice-muted">For {company.name}</p>
         </div>
       </section>

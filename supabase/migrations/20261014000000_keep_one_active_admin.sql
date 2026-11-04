@@ -38,6 +38,12 @@ begin
 end;
 $$;
 
+-- Trigger functions can't be called directly, but in a Supabase project every new
+-- function is executable by the API roles by default. Keep this one private, like the
+-- other internal functions. Triggers still fire: PostgreSQL checks EXECUTE only when a
+-- trigger is created (by the owner), not when it fires.
+revoke execute on function public.ensure_active_admin() from public, anon, authenticated;
+
 -- ============================================================
 -- 2. Triggers: only fire when an ACTIVE admin row is changed away or removed
 -- ============================================================
@@ -71,6 +77,8 @@ begin
   raise exception 'The profiles table can''t be truncated: it holds the staff accounts and their roles.';
 end;
 $$;
+
+revoke execute on function public.block_profiles_truncate() from public, anon, authenticated;
 
 drop trigger if exists block_profiles_truncate on public.profiles;
 create trigger block_profiles_truncate

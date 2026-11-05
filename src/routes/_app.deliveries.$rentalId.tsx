@@ -3,12 +3,9 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import {
   ArrowLeft,
   BellRing,
-  Camera,
   Check,
-  CheckCircle2,
   ClipboardCheck,
   FileText,
-  ImageIcon,
   Loader2,
   MapPin,
   MessageCircle,
@@ -16,8 +13,9 @@ import {
   Truck,
   UserRound,
 } from "lucide-react";
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { WhatsAppHistory } from "@/components/invoices/whatsapp-history";
+import { DeliveryPhotos } from "@/components/rentals/delivery-photos";
 import { WhatsAppSendDialog } from "@/components/invoices/whatsapp-send-dialog";
 import {
   RenewRentalDialog,
@@ -47,9 +45,9 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
-import { deliveryPhotoUrl, uploadDeliveryPhoto } from "@/lib/db/deliveries";
+import { deliveryPhotoUrl } from "@/lib/db/deliveries";
 import { profileQueries } from "@/lib/db/profiles";
-import { queryKeys, workflowKeys } from "@/lib/db/query-keys";
+import { workflowKeys } from "@/lib/db/query-keys";
 import {
   assignSupervisor,
   rentalQueries,
@@ -59,6 +57,7 @@ import {
 import { formatDate, formatDateTime, inr } from "@/lib/format";
 import { notifyError, notifySuccess } from "@/lib/notify";
 import { totalPaid } from "@/lib/payments";
+import { canRecordDelivery, canRemoveDeliveryPhoto } from "@/lib/delivery";
 import { isOfficeRole, useCurrentUser } from "@/lib/roles";
 import {
   asDeliveryStatus,
@@ -123,13 +122,15 @@ function Delivery({ rental }: { rental: RentalDetail }) {
   const [returning, setReturning] = useState<RentalRef | null>(null);
   const [confirmationOpen, setConfirmationOpen] = useState(false);
   const [reminderOpen, setReminderOpen] = useState(false);
-  const fileInput = useRef<HTMLInputElement>(null);
 
   const delivery = asDeliveryStatus(rental.delivery_status);
   const stage = rentalStage(rental);
   const open = isOpenRental(rental);
-  const canUpdate =
-    open && delivery !== "delivered" && (office || rental.supervisor_id === profile.id);
+  // Recording the delivery (photos, notes, out for delivery, confirm) is the assigned
+  // supervisor's job; admins and telecallers see the result and manage assignment.
+  // The database enforces the same rule.
+  const me = { role, profileId: profile.id };
+  const canUpdate = canRecordDelivery(me, rental);
   const photos = rental.delivery_photos;
   const stepIndex = delivery === "pending" ? -1 : steps.findIndex((s) => s.value === delivery);
   const supervisors = (staff.data ?? []).filter((p) => p.role === "supervisor" && p.is_active);
@@ -158,16 +159,6 @@ function Delivery({ rental }: { rental: RentalDetail }) {
       );
     },
     onError: (error) => notifyError(error, "Couldn't update delivery"),
-  });
-
-  const upload = useMutation({
-    mutationFn: (file: File) => uploadDeliveryPhoto(rental.id, file),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: queryKeys.rentals.all });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.activity.all });
-      notifySuccess("Delivery photo uploaded");
-    },
-    onError: (error) => notifyError(error, "Photo not uploaded"),
   });
 
   return (
@@ -399,88 +390,25 @@ function Delivery({ rental }: { rental: RentalDetail }) {
           </Card>
 
           <Card className="gap-0 p-6 shadow-xs">
-            <h2 className="text-base font-semibold">Delivery confirmation</h2>
+            <h2 className="text-base font-semibold">
+              {canUpdate ? "Delivery confirmation" : "Delivery proof"}
+            </h2>
             <p className="text-sm text-muted-foreground">
-              Photo of the installed equipment, then confirm delivery.
+              {canUpdate
+                ? "Upload photos of the installed equipment, then confirm delivery."
+                : "Photos and notes recorded by the assigned supervisor."}
             </p>
             <Separator className="my-5" />
 
-            <input
-              ref={fileInput}
-              type="file"
-              accept="image/*"
-              capture="environment"
-              className="sr-only"
-              aria-label="Upload delivery photo"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) upload.mutate(file);
-                e.target.value = "";
-              }}
+            <DeliveryPhotos
+              rentalId={rental.id}
+              photos={photos}
+              canUpload={canUpdate}
+              canRemove={(photo) => canRemoveDeliveryPhoto(me, rental, photo)}
+              onView={setViewing}
             />
 
-            {photos.length > 0 && (
-              <div className="mb-4 space-y-2">
-                <p className="flex items-center gap-1.5 text-sm font-medium text-success">
-                  <CheckCircle2 className="size-4" /> Delivery Photo Uploaded
-                </p>
-                <ul className="space-y-2">
-                  {photos.map((p) => (
-                    <li
-                      key={p.id}
-                      className="flex flex-wrap items-center justify-between gap-2 rounded-xl border p-3 text-sm"
-                    >
-                      <span className="text-muted-foreground">
-                        {p.uploader?.full_name ?? "Staff"} · {formatDateTime(p.created_at)}
-                      </span>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        className="rounded-lg"
-                        onClick={() => setViewing(p.storage_path)}
-                      >
-                        <ImageIcon className="size-4" /> View Photo
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {canUpdate && delivery !== "pending" && (
-              <button
-                type="button"
-                disabled={upload.isPending}
-                onClick={() => fileInput.current?.click()}
-                className="flex w-full flex-col items-center justify-center gap-2 rounded-2xl border border-dashed px-6 py-7 text-center transition-colors hover:border-primary/50 hover:bg-primary-soft/40 disabled:opacity-60"
-              >
-                <span className="flex size-11 items-center justify-center rounded-2xl bg-primary-soft text-primary">
-                  {upload.isPending ? (
-                    <Loader2 className="size-5 animate-spin" />
-                  ) : (
-                    <Camera className="size-5" />
-                  )}
-                </span>
-                <span className="text-sm font-medium">
-                  {upload.isPending
-                    ? "Uploading…"
-                    : photos.length
-                      ? "Add another photo"
-                      : "Upload Delivery Photo"}
-                </span>
-                <span className="text-xs text-muted-foreground">
-                  Take a photo or choose one · up to 10 MB
-                </span>
-              </button>
-            )}
-            {!canUpdate && photos.length === 0 && (
-              <p className="rounded-xl border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">
-                No delivery photo yet.
-              </p>
-            )}
-
-            {canUpdate && delivery !== "pending" && (
+            {canUpdate && (
               <>
                 <div className="mt-5 space-y-2">
                   <Label htmlFor="delivery-notes">Delivery notes</Label>
@@ -518,7 +446,7 @@ function Delivery({ rental }: { rental: RentalDetail }) {
                 </div>
                 {photos.length === 0 && (
                   <p className="mt-2 text-right text-xs text-muted-foreground">
-                    Upload a delivery photo to confirm.
+                    Upload at least one delivery photo to confirm.
                   </p>
                 )}
               </>

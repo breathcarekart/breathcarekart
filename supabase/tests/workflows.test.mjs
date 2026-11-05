@@ -218,9 +218,47 @@ r = await as(U.sup, `insert into storage.objects (bucket_id, name) values ('deli
 check("upload outside a rental folder rejected", !!r.error, r.error);
 r = await as(U.sup, `insert into public.delivery_photos (rental_id, storage_path, uploaded_by) values ($1, $2, $3) returning uploaded_by`, [rent.rental_id, `${rent.rental_id}/photo.jpg`, U.admin]);
 check("photo metadata saved; uploaded_by forced", r.rows?.[0]?.uploaded_by === U.sup, r.error);
+
+// Supervisor-only delivery confirmation (migration 20261105000000)
+for (const [who, label] of [[U.admin, "admin"], [U.tele, "telecaller"]]) {
+  r = await as(who, `select public.set_delivery_status($1, 'delivered', 'by office')`, [rent.rental_id]);
+  check(`delivery: ${label} can't confirm a delivery (API)`, r.code === "42501", r.error);
+  r = await as(who, `insert into storage.objects (bucket_id, name) values ('delivery-photos', $1 || '/${label}.jpg')`, [rent.rental_id]);
+  check(`delivery: ${label} can't upload a delivery photo file`, !!r.error, r.error);
+  r = await as(who, `insert into public.delivery_photos (rental_id, storage_path) values ($1, $2)`, [rent.rental_id, `${rent.rental_id}/${label}.jpg`]);
+  check(`delivery: ${label} can't add a delivery photo record`, !!r.error && /row-level security/.test(r.error), r.error);
+}
+r = await as(U.sup, `insert into storage.objects (bucket_id, name) values ('delivery-photos', $1 || '/second.jpg'), ('delivery-photos', $1 || '/third.jpg') returning name`, [rent.rental_id]);
+check("delivery: assigned supervisor uploads several photo files at once", r.rows?.length === 2, r.error);
+r = await as(U.sup, `insert into public.delivery_photos (rental_id, storage_path) values ($1, $2), ($1, $3) returning id`, [rent.rental_id, `${rent.rental_id}/second.jpg`, `${rent.rental_id}/third.jpg`]);
+check("delivery: several photo records saved against the rental", r.rows?.length === 2, r.error);
+check("delivery: earlier photos kept when more are added", (await one(`select count(*)::int n from public.delivery_photos where rental_id = $1`, [rent.rental_id])).n === 3);
+r = await as(U.sup, `delete from storage.objects where bucket_id = 'delivery-photos' and name = $1 || '/third.jpg' returning name`, [rent.rental_id]);
+check("delivery: supervisor removes their own photo file before confirming", r.rows?.length === 1, r.error);
+r = await as(U.sup, `delete from public.delivery_photos where storage_path = $1 || '/third.jpg' returning id`, [rent.rental_id]);
+check("delivery: supervisor removes their own photo record before confirming", r.rows?.length === 1, r.error);
+await sys(`insert into storage.objects (bucket_id, name) values ('delivery-photos', $1 || '/admin-proof.jpg')`, [rent.rental_id]);
+await sys(`insert into public.delivery_photos (rental_id, storage_path, uploaded_by) values ($1::uuid, $1::text || '/admin-proof.jpg', $2)`, [rent.rental_id, U.admin]);
+r = await as(U.sup, `delete from storage.objects where bucket_id = 'delivery-photos' and name = $1 || '/admin-proof.jpg' returning name`, [rent.rental_id]);
+check("delivery: supervisor can't remove someone else's photo file", !r.error && r.rows.length === 0, r.error ?? "0 rows");
+r = await as(U.sup, `delete from public.delivery_photos where storage_path = $1 || '/admin-proof.jpg' returning id`, [rent.rental_id]);
+check("delivery: supervisor can't remove someone else's photo record", !r.error && r.rows.length === 0, r.error ?? "0 rows");
+r = await as(U.admin, `delete from public.delivery_photos where storage_path = $1 || '/admin-proof.jpg' returning id`, [rent.rental_id]);
+check("delivery: admin can still delete a delivery photo record", r.rows?.length === 1, r.error);
+r = await as(U.admin, `delete from storage.objects where bucket_id = 'delivery-photos' and name = $1 || '/admin-proof.jpg' returning name`, [rent.rental_id]);
+check("delivery: admin can still delete a delivery photo file", r.rows?.length === 1, r.error);
+r = await as(U.admin, `select count(*)::int n from public.delivery_photos where rental_id = $1`, [rent.rental_id]);
+check("delivery: admin can view all delivery photos", r.rows?.[0]?.n === 2, r.error);
 r = await as(U.sup, `select public.set_delivery_status($1, 'delivered', 'Installed in bedroom')`, [rent.rental_id]);
 const delivered = await one(`select delivery_status, delivered_at, delivery_notes from public.rentals where id=$1`, [rent.rental_id]);
 check("supervisor confirms delivery", !r.error && delivered.delivery_status === "delivered" && !!delivered.delivered_at, r.error);
+r = await as(U.sup, `insert into storage.objects (bucket_id, name) values ('delivery-photos', $1 || '/late.jpg')`, [rent.rental_id]);
+check("delivery: no more photo uploads once delivered", !!r.error, r.error);
+r = await as(U.sup, `delete from public.delivery_photos where storage_path = $1 || '/second.jpg' returning id`, [rent.rental_id]);
+check("delivery: photos can't be removed once delivered", !r.error && r.rows.length === 0, r.error ?? "0 rows");
+// Keep the rest of this file's expectations (one stored proof file).
+await sys(`delete from public.delivery_photos where storage_path = $1 || '/second.jpg'`, [rent.rental_id]);
+await sys(`delete from storage.objects where bucket_id = 'delivery-photos' and name = $1 || '/second.jpg'`, [rent.rental_id]);
 r = await as(U.admin, `select name from storage.objects where bucket_id='delivery-photos'`);
 check("admin can see delivery proof", r.rows?.length === 1, r.error);
 r = await as(U.sup2, `select name from storage.objects`);
@@ -307,7 +345,7 @@ inv = r.rows ? await one(`select invoice_number from public.invoices where id=$1
 check("new prefix used, counter continues", inv?.invoice_number === "INV/2026/0003", r.error ?? inv?.invoice_number);
 check("rental without supervisor → pending delivery", (await one(`select delivery_status from public.rentals where id=$1`, [r.rows[0].res.rental_id])).delivery_status === "pending");
 r = await as(U.tele, `select public.set_delivery_status($1, 'out_for_delivery')`, [r.rows[0].res.rental_id]);
-check("can't start delivery before assignment", !!r.error && /Assign/.test(r.error), r.error);
+check("telecaller can't start a delivery (supervisor only)", r.code === "42501", r.error);
 
 // ── Staff account creation (database side of the create-staff-user Edge Function) ──
 // The function creates the auth user (trigger adds an inactive supervisor profile), then

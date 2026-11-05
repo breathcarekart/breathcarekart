@@ -21,9 +21,35 @@ export { TEMPLATES, type TemplateName };
 export type WhatsAppSendMode = "dry_run" | "test" | "live";
 export const DEFAULT_SEND_MODE: WhatsAppSendMode = "dry_run";
 
-/** The mode a dialog starts in: send to the customer when the server allows it. */
-export const initialSendMode = (preview: WhatsAppPreview | null | undefined): WhatsAppSendMode =>
-  preview?.modes.live ? "live" : DEFAULT_SEND_MODE;
+/**
+ * The staff workflow is always "Send to customer". Internal test sends and checks are an
+ * admin-only option the admin has to pick explicitly; a customer message is never routed
+ * to the test number.
+ */
+export const initialSendMode = (_preview?: WhatsAppPreview | null): WhatsAppSendMode => "live";
+
+/**
+ * What still has to be set up before messages can go to customers, in words an admin can
+ * act on. Empty when customer sending is available.
+ */
+export function customerSetupProblems(preview: WhatsAppPreview | null | undefined): string[] {
+  if (!preview || preview.modes.live) return [];
+  const problems: string[] = [];
+  if (preview.setup && !preview.setup.api_key) {
+    problems.push(
+      "The AiSensy API key (AISENSY_API_KEY) isn't set in Supabase Edge Function secrets.",
+    );
+  }
+  if (!preview.setup || !preview.setup.live_switch) {
+    problems.push(
+      'Sending to customers is switched off: set WHATSAPP_LIVE_ENABLED to "true" in Supabase Edge Function secrets when you are ready.',
+    );
+  }
+  if (!preview.mapping_verified) {
+    problems.push("This template's mapping hasn't been verified against AiSensy yet.");
+  }
+  return problems;
+}
 
 /** Staff-facing names and descriptions of the approved templates. */
 export const templateInfo: Record<TemplateName, { title: string; action: string; about: string }> =
@@ -62,6 +88,8 @@ export type WhatsAppPreview = {
   recipient: { name: string; phone_masked: string };
   test_destination_masked: string | null;
   modes: { dry_run: boolean; test: boolean; live: boolean };
+  /** Which server settings exist (yes/no only). Missing from older function versions. */
+  setup?: { api_key: boolean; live_switch: boolean; test_number: boolean };
   already_sent: { live: boolean; test: boolean };
   /** null for templates without an attachment. */
   attachment_filename: string | null;
@@ -130,8 +158,8 @@ export const ACCEPTED_NOTE =
 
 // ── History ─────────────────────────────────────────────────────────────────
 export const modeLabels: Record<string, string> = {
-  dry_run: "Dry run",
-  test: "Test send",
+  dry_run: "Internal check",
+  test: "Internal test",
   live: "To customer",
 };
 

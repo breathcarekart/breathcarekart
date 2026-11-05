@@ -366,9 +366,9 @@ test("test mode sends ONLY to the internal test number, never the customer", asy
   assert.equal(r.status, 200);
   assert.equal(r.body["status"], "accepted");
   const sent = calls.sends[0] as { destination: string };
-  assert.equal(sent.destination, "+919000000001");
+  assert.equal(sent.destination, "919000000001");
   assert.equal(calls.claims[0]!.destination, "+919000000001");
-  assert.notEqual(sent.destination, "+919845011223");
+  assert.notEqual(sent.destination, "919845011223");
   assert.equal(calls.updates.at(-1)!.patch.status, "sent");
 });
 
@@ -401,13 +401,59 @@ test("live mode is off unless the server switch is on; then it sends to the cust
   assert.equal(r2.body["status"], "accepted");
   assert.equal(on.calls.claims[0]!.mode, "live");
   assert.equal(on.calls.claims[0]!.destination, "+919845011223");
-  assert.equal((on.calls.sends[0] as { destination: string }).destination, "+919845011223");
+  assert.equal((on.calls.sends[0] as { destination: string }).destination, "919845011223");
 
   // Without an API key nothing can go out, even with the switch on.
   const noKey = setup();
   const r3 = await noKey.run({ mode: "live" }, { liveEnabled: true, apiKeyConfigured: false });
   assert.equal(code(r3), "not_configured");
   assert.equal(noKey.calls.sends.length, 0);
+});
+
+test("all four messages: live goes to the customer's own number, test only to the test number", async () => {
+  const customer = { ...invoice().customer!, phone: "+91 98450-11223", whatsapp: null };
+  for (const template of [
+    "invoice_send",
+    "payment_request",
+    "rental_booking_confirmation",
+    "return_or_renew_reminder",
+  ]) {
+    const records = {
+      invoice: invoice({ amount_paid: "4750.00", customer }),
+      rental: rental({ customer }),
+    };
+    const live = setup({}, records);
+    const r1 = await live.run({ template, mode: "live" }, { liveEnabled: true });
+    assert.equal(r1.status, 200, `${template} ${JSON.stringify(r1.body)}`);
+    assert.equal((live.calls.sends[0] as { destination: string }).destination, "919845011223");
+    assert.equal(live.calls.claims[0]!.destination, "+919845011223", template);
+
+    const test = setup({}, records);
+    const r2 = await test.run({ template, mode: "test" }, { liveEnabled: true });
+    assert.equal(r2.status, 200, template);
+    assert.equal((test.calls.sends[0] as { destination: string }).destination, "919000000001");
+
+    // Switch off: nothing goes to the customer, and nothing is rerouted to the test number.
+    const off = setup({}, records);
+    assert.equal(code(await off.run({ template, mode: "live" })), "live_disabled", template);
+    assert.equal(off.calls.sends.length, 0, template);
+  }
+});
+
+test("a customer without a valid number is refused in live mode, never sent to the test number", async () => {
+  for (const [phone, expected] of [
+    [null, "missing_phone"],
+    ["12345", "invalid_phone"],
+    ["+44 7700 900123", "invalid_phone"],
+  ] as const) {
+    const records = {
+      invoice: invoice({ customer: { ...invoice().customer!, phone, whatsapp: null } }),
+    };
+    const s = setup({}, records);
+    const r = await s.run({ mode: "live" }, { liveEnabled: true });
+    assert.equal(code(r), expected, String(phone));
+    assert.equal(s.calls.sends.length + s.calls.claims.length, 0, String(phone));
+  }
 });
 
 // ── Duplicates and resends ─────────────────────────────────────────────────
@@ -680,6 +726,22 @@ test("browser-supplied values are ignored for rental templates too", async () =>
     rental_amount: "1",
   });
   const sent = calls.sends[0] as { destination: string; templateParams: string[] };
-  assert.equal(sent.destination, "+919000000001");
+  assert.equal(sent.destination, "919000000001");
   assert.ok(!sent.templateParams.includes("Someone Else") && !sent.templateParams.includes("1"));
+});
+
+test("preview reports which server settings are in place, as yes/no only", async () => {
+  const { run } = setup();
+  const off = await run({ action: "preview" }, { liveEnabled: false });
+  assert.deepEqual(off.body["setup"], { api_key: true, live_switch: false, test_number: true });
+  const bare = await run(
+    { action: "preview" },
+    { apiKeyConfigured: false, testDestination: null, liveEnabled: false },
+  );
+  assert.deepEqual(bare.body["setup"], { api_key: false, live_switch: false, test_number: false });
+  assert.deepEqual(bare.body["modes"], { dry_run: true, test: false, live: false });
+  const on = await run({ action: "preview" }, { liveEnabled: true });
+  assert.deepEqual(on.body["modes"], { dry_run: true, test: true, live: true });
+  // Never the values themselves.
+  assert.ok(!JSON.stringify(on.body).includes("90000 00001"));
 });

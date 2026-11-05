@@ -9,6 +9,7 @@ import {
   historyStatusLabels,
   historyStatusTone,
   inFlightPhase,
+  customerSetupProblems,
   initialSendMode,
   isOutcomeUnknown,
   maskCustomerPhone,
@@ -37,7 +38,7 @@ const preview = (over: Partial<WhatsAppPreview> = {}): WhatsAppPreview => ({
 });
 
 // ── Modes ──────────────────────────────────────────────────────────────────
-test("send to customer is offered first and pre-selected only when the server allows it", () => {
+test("the workflow always starts on Send to customer; it is only available when the server allows it", () => {
   assert.equal(DEFAULT_SEND_MODE, "dry_run");
   const on = preview({ modes: { dry_run: true, test: true, live: true } });
   assert.deepEqual(
@@ -48,11 +49,33 @@ test("send to customer is offered first and pre-selected only when the server al
       ["dry_run", true],
     ],
   );
-  assert.equal(initialSendMode(on), "live");
   const off = preview({ modes: { dry_run: true, test: false, live: false } });
   assert.equal(modeOptions(off).find((o) => o.mode === "live")?.available, false);
-  assert.equal(initialSendMode(off), "dry_run");
-  assert.equal(initialSendMode(null), "dry_run");
+  // Never silently falls back to a test or check: it stays on the customer (disabled).
+  for (const p of [on, off, null]) assert.equal(initialSendMode(p), "live");
+});
+
+test("admins are told exactly what is missing before customers can be messaged", () => {
+  const ready = preview({ modes: { dry_run: true, test: true, live: true } });
+  assert.deepEqual(customerSetupProblems(ready), []);
+  const liveOff = preview({
+    modes: { dry_run: true, test: true, live: false },
+    setup: { api_key: true, live_switch: false, test_number: true },
+    mapping_verified: true,
+  });
+  const p1 = customerSetupProblems(liveOff);
+  assert.equal(p1.length, 1);
+  assert.match(p1[0]!, /WHATSAPP_LIVE_ENABLED/);
+  const bare = preview({
+    modes: { dry_run: true, test: false, live: false },
+    setup: { api_key: false, live_switch: false, test_number: false },
+    mapping_verified: true,
+  });
+  const p2 = customerSetupProblems(bare);
+  assert.ok(
+    p2.some((x) => /AISENSY_API_KEY/.test(x)) && p2.some((x) => /WHATSAPP_LIVE_ENABLED/.test(x)),
+  );
+  assert.ok(!p2.join(" ").match(/test number/i), "the test number isn't needed for customers");
 });
 
 test("a repeat to the customer checks the customer history, not the test history", () => {

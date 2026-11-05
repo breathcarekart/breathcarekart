@@ -102,6 +102,17 @@ export function normalizeIndianMobile(raw: string | null | undefined): PhoneResu
   return { ok: false, reason: "invalid" };
 }
 
+/**
+ * The number as AiSensy's `destination` expects it: country code + number, digits only
+ * ("919845011223"). The number is validated again here, so nothing that isn't a valid
+ * Indian mobile can ever reach AiSensy.
+ */
+export function toAiSensyDestination(raw: string): string {
+  const phone = normalizeIndianMobile(raw);
+  if (!phone.ok) throw new Error("Refusing to send to an invalid WhatsApp number.");
+  return phone.e164.slice(1);
+}
+
 /** "+919845011223" -> "+91 ******1223" for screens and logs shown to users. */
 export const maskPhone = (e164: string) =>
   e164.length > 7 ? `${e164.slice(0, 3)} ${"*".repeat(e164.length - 7)}${e164.slice(-4)}` : "****";
@@ -234,7 +245,7 @@ export function buildCampaignPayload(args: {
 }): CampaignPayload {
   const payload: CampaignPayload = {
     campaignName: TEMPLATES[args.template ?? "invoice_send"].campaignName,
-    destination: args.destination,
+    destination: toAiSensyDestination(args.destination),
     userName: sanitizeTemplateValue(args.userName, 100),
     source: AISENSY_SOURCE,
     templateParams: args.templateParams,

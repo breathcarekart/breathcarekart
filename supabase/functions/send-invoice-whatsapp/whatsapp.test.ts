@@ -17,6 +17,7 @@ import {
   sanitizeProviderResponse,
   sanitizeTemplateValue,
   TEMPLATES,
+  toAiSensyDestination,
 } from "./whatsapp.ts";
 
 // ── Phone numbers ──────────────────────────────────────────────────────────
@@ -51,6 +52,30 @@ test("missing and invalid numbers are refused", () => {
   ]) {
     assert.equal(normalizeIndianMobile(raw).ok, false, raw);
   }
+});
+
+test("AiSensy gets country code + number, digits only; invalid numbers never get through", () => {
+  for (const raw of [
+    "9845011223",
+    "919845011223",
+    "+919845011223",
+    "+91 98450 11223",
+    "098450 11223",
+  ]) {
+    assert.equal(toAiSensyDestination(raw), "919845011223", raw);
+  }
+  for (const raw of ["", "12345", "+44 7700 900123", "5845011223"]) {
+    assert.throws(() => toAiSensyDestination(raw), raw);
+  }
+  const p = buildCampaignPayload({
+    destination: "+919845011223",
+    userName: "Test Customer",
+    templateParams: ["a"],
+  });
+  assert.equal(p.destination, "919845011223");
+  assert.throws(() =>
+    buildCampaignPayload({ destination: "12345", userName: "x", templateParams: ["a"] }),
+  );
 });
 
 test("phone numbers are masked for display", () => {
@@ -190,7 +215,7 @@ test("payload has exactly the documented Legacy Campaign fields and never the ke
   ]);
   assert.equal(payload.campaignName, "invoice_send");
   assert.equal(payload.source, "breathcarekart-app");
-  assert.deepEqual(Object.keys(payload.media).sort(), ["filename", "url"]);
+  assert.deepEqual(Object.keys(payload.media ?? {}).sort(), ["filename", "url"]);
   assert.ok(!("apiKey" in payload));
 });
 

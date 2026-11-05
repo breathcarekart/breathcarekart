@@ -102,7 +102,7 @@ export function WhatsAppHistoryCard({
       </div>
       <Separator />
       {state.kind === "off" ? (
-        <Empty>WhatsApp sending isn't switched on for this environment.</Empty>
+        <Empty>Automatic WhatsApp sending isn't switched on yet.</Empty>
       ) : state.kind === "loading" ? (
         <Empty>
           <Loader2 className="mx-auto size-4 animate-spin" aria-label="Loading" />

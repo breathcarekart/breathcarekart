@@ -438,6 +438,13 @@ export async function handleSendInvoiceWhatsApp(
         ? maskPhone(availability.testDestination)
         : null,
       modes: { dry_run: availability.dry_run, test: availability.test, live: availability.live },
+      // Which server settings are in place (yes/no only, never values), so the app can tell
+      // an admin exactly what's missing instead of failing at send time.
+      setup: {
+        api_key: config.apiKeyConfigured,
+        live_switch: config.liveEnabled,
+        test_number: !!availability.testDestination,
+      },
       already_sent: { live: sentLive, test: sentTest },
       attachment_filename: filename,
     });

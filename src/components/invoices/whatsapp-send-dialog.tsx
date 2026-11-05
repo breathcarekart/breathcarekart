@@ -30,6 +30,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { DataError } from "@/lib/db/errors";
 import { queryKeys } from "@/lib/db/query-keys";
 import { notifySuccess } from "@/lib/notify";
+import { useCurrentUser } from "@/lib/roles";
 import { cn } from "@/lib/utils";
 import {
   isWhatsAppConfigured,
@@ -40,6 +41,7 @@ import {
 import {
   ACCEPTED_NOTE,
   createSendGuard,
+  customerSetupProblems,
   describeSendError,
   inFlightPhase,
   initialSendMode,
@@ -94,6 +96,7 @@ export function WhatsAppSendDialog({
   fallbackMessage: string;
 }) {
   const configured = isWhatsAppConfigured();
+  const { role } = useCurrentUser();
   const subject = { template, id: subjectId };
   const queryClient = useQueryClient();
   const guard = useRef(createSendGuard());
@@ -192,6 +195,7 @@ export function WhatsAppSendDialog({
       <DialogContent className="max-h-[92vh] overflow-y-auto rounded-2xl sm:max-w-lg">
         <WhatsAppSendPanel
           template={template}
+          isAdmin={role === "admin"}
           configured={configured}
           blockedReason={blockedReason}
           customerName={preview.data?.recipient.name ?? customerName}
@@ -232,6 +236,8 @@ export function WhatsAppSendDialog({
 
 export type WhatsAppSendPanelProps = {
   template: TemplateName;
+  /** Admins also get the setup warning and the internal testing options. */
+  isAdmin: boolean;
   configured: boolean;
   blockedReason: string | null;
   customerName: string;
@@ -265,20 +271,19 @@ const modeText = (p: WhatsAppSendPanelProps, mode: WhatsAppSendMode) =>
     : mode === "test"
       ? {
           icon: <FlaskConical className="size-4" />,
-          title: "Test send",
-          description: `Sends only to the internal test number ${p.preview?.test_destination_masked ?? ""}. The customer receives nothing.`,
+          title: "Send to the internal test number",
+          description: `Only to ${p.preview?.test_destination_masked ?? "the internal test number"}. The customer receives nothing.`,
         }
       : {
           icon: <ShieldCheck className="size-4" />,
-          title: "Dry run",
-          description: "Prepares and checks everything. Nothing is sent to anyone.",
+          title: "Check only",
+          description: "Prepares and checks the message and attachment. Nothing is sent to anyone.",
         };
 
 /** The dialog's contents, driven only by props (no data fetching). */
 export function WhatsAppSendPanel(p: WhatsAppSendPanelProps) {
   const info = templateInfo[p.template];
-  const options = modeOptions(p.preview);
-  const selected = options.find((o) => o.mode === p.mode);
+  const selected = modeOptions(p.preview).find((o) => o.mode === p.mode);
   const error = p.errorCode ? describeSendError(p.errorCode) : null;
   const previewError = p.previewErrorCode ? describeSendError(p.previewErrorCode) : null;
   const ready = p.configured && !p.blockedReason && !!p.preview && !previewError;
@@ -289,9 +294,11 @@ export function WhatsAppSendPanel(p: WhatsAppSendPanelProps) {
     (p.needsConfirm && !p.resendConfirmed) ||
     (error != null && (error.retry === "none" || error.retry === "wait"));
 
+  const setupProblems = customerSetupProblems(p.preview);
+  const internal = p.mode !== "live";
   const actionLabel =
     p.mode === "dry_run"
-      ? "Run dry run"
+      ? "Run check"
       : p.needsConfirm
         ? "Send Again"
         : error?.retry === "retry"
@@ -359,36 +366,70 @@ export function WhatsAppSendPanel(p: WhatsAppSendPanelProps) {
             </dl>
           </div>
 
-          <fieldset className="space-y-2" disabled={p.pending}>
-            <legend className="mb-2 text-sm font-medium">How to send</legend>
-            <RadioGroup
-              value={p.mode}
-              onValueChange={(v) => p.onModeChange(v as WhatsAppSendMode)}
-              className="gap-2"
-            >
-              {options
-                .filter((o) => o.available || o.mode !== "live")
-                .map((o) => {
-                  const t = modeText(p, o.mode);
-                  return (
-                    <ModeChoice
-                      key={o.mode}
-                      value={o.mode}
-                      checked={p.mode === o.mode}
-                      disabled={!o.available}
-                      icon={t.icon}
-                      title={t.title}
-                      description={o.available ? t.description : (o.reason ?? "")}
-                    />
-                  );
-                })}
-            </RadioGroup>
-            {!p.preview.modes.live && (
-              <p className="text-xs text-muted-foreground">
-                Sending to customers is switched off on the server.
-              </p>
+          <div
+            className={cn(
+              "flex items-start gap-3 rounded-xl border p-3",
+              !internal && p.preview.modes.live && "border-primary bg-primary-soft/40",
             )}
-          </fieldset>
+          >
+            <UserRound className="mt-0.5 size-4 shrink-0 text-primary" />
+            <p className="text-sm">
+              <span className="font-medium">Send to customer</span>
+              <span className="block text-xs text-muted-foreground">
+                To {p.customerName} on {p.phoneMasked ?? "their number"}, from the Breath Care Kart
+                WhatsApp Business number.
+              </span>
+            </p>
+          </div>
+
+          {!p.preview.modes.live &&
+            (p.isAdmin ? (
+              <Notice tone="warning">
+                <span className="block font-medium">
+                  Setup needed before messages can go to customers:
+                </span>
+                <ul className="mt-1 list-disc space-y-0.5 pl-5">
+                  {setupProblems.map((x) => (
+                    <li key={x}>{x}</li>
+                  ))}
+                </ul>
+              </Notice>
+            ) : (
+              <Notice tone="warning">
+                Sending to customers isn't switched on yet. Ask an admin.
+              </Notice>
+            ))}
+
+          {p.isAdmin && (
+            <details className="rounded-xl border px-3 py-2" open={internal}>
+              <summary className="cursor-pointer text-sm font-medium text-muted-foreground">
+                Internal testing (admins only)
+              </summary>
+              <fieldset className="mt-3 space-y-2" disabled={p.pending}>
+                <legend className="sr-only">Internal testing options</legend>
+                <RadioGroup
+                  value={p.mode}
+                  onValueChange={(v) => p.onModeChange(v as WhatsAppSendMode)}
+                  className="gap-2"
+                >
+                  {modeOptions(p.preview).map((o) => {
+                    const t = modeText(p, o.mode);
+                    return (
+                      <ModeChoice
+                        key={o.mode}
+                        value={o.mode}
+                        checked={p.mode === o.mode}
+                        disabled={!o.available}
+                        icon={t.icon}
+                        title={t.title}
+                        description={o.available ? t.description : (o.reason ?? "")}
+                      />
+                    );
+                  })}
+                </RadioGroup>
+              </fieldset>
+            </details>
+          )}
 
           {p.mode !== "dry_run" &&
             p.phase === "ready" &&

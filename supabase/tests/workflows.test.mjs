@@ -290,8 +290,8 @@ check("logged: payment recorded", has("payment", "recorded", "Anitha R"));
 check("logged: out for delivery, photo, delivered by Ravi", has("rental", "out_for_delivery", "Ravi") && has("rental", "delivery_photo_uploaded", "Ravi") && has("rental", "delivered", "Ravi"));
 check("logged: renewed, returned", has("rental", "renewed") && has("rental", "returned"));
 check("logged: role change", has("profile", "role_changed"));
-r = await as(U.tele, `select count(*)::int n from public.activity_log where entity_type='profile'`);
-check("telecaller can't read user-admin activity", r.rows?.[0]?.n === 0, r.error);
+r = await as(U.tele, `select count(*)::int n from public.activity_log`);
+check("telecaller reads the full activity log, like an admin", r.rows?.[0]?.n === acts.length, r.error);
 r = await as(U.admin, `select count(*)::int n from public.activity_log`);
 check("admin reads full activity log", r.rows?.[0]?.n === acts.length, r.error);
 r = await as(U.sup, `select count(*)::int n from public.activity_log`);
@@ -309,8 +309,8 @@ check("business: initial details filled in by the data migration", initial.compa
   const after = await one(`select email, gstin, authorised_signatory from public.company_settings`);
   check("business: re-running the data migration never overwrites admin edits", after.email === "changed@business.test" && after.authorised_signatory === "Someone Else" && after.gstin === "36AALCG1309A1Z4", JSON.stringify(after));
 }
-r = await as(U.tele, `update public.company_settings set gstin='X' returning id`);
-check("telecaller cannot edit company settings", !r.error && r.rows.length === 0, r.error ?? "0 rows");
+r = await as(U.tele, `update public.company_settings set gstin='29AAAAA0000A1Z5' returning updated_by`);
+check("telecaller edits company settings (stamped)", r.rows?.[0]?.updated_by === U.tele, r.error);
 r = await as(U.admin, `update public.company_settings set invoice_prefix='INV', gstin='29AAAAA0000A1Z5' returning updated_by`);
 check("admin edits settings (stamped)", r.rows?.[0]?.updated_by === U.admin, r.error);
 // Business & GST settings (migration 20261104000000_business_gst_settings)
@@ -327,7 +327,9 @@ r = await as(U.admin, `update public.company_settings set email = 'not-an-email'
 check("gst: invalid business email refused", /company_settings_email_format/.test(r.error ?? ""), r.error);
 r = await as(U.admin, `update public.company_settings set gst_registered = false, gstin = null, default_gst_rate = null returning gst_registered, gstin`);
 check("gst: admin switches to Not registered without a GSTIN", r.rows?.[0]?.gst_registered === false && r.rows?.[0]?.gstin === null, r.error);
-for (const who of ["tele", "sup", "inactive"]) {
+r = await as(U.tele, `update public.company_settings set gst_registered = true, gstin = $1 returning gstin`, [gstOk]);
+check("gst: telecaller can change GST settings, like an admin", r.rows?.[0]?.gstin === gstOk, r.error);
+for (const who of ["sup", "inactive"]) {
   r = await as(U[who], `update public.company_settings set gst_registered = true, gstin = $1 returning id`, [gstOk]);
   check(`gst: ${who} can't change GST settings`, !!r.error || r.rows.length === 0, r.error ?? "0 rows");
 }
@@ -366,8 +368,6 @@ check(
   created.role === "supervisor" && created.is_active === false && created.full_name === "New Staff" && created.email === "new.staff@test.local",
   JSON.stringify(created),
 );
-r = await as(U.tele, `update public.profiles set role='telecaller', is_active=true where id=$1 returning id`, [NEW1]);
-check("staff create: telecaller can't finish setting up an account", !!r.error || r.rows.length === 0, r.error ?? "0 rows");
 r = await as(U.sup, `update public.profiles set role='telecaller', is_active=true where id=$1 returning id`, [NEW1]);
 check("staff create: supervisor can't finish setting up an account", !!r.error || r.rows.length === 0, r.error ?? "0 rows");
 await sys(`update public.profiles set role='admin', is_active=false where id=$1`, [FAKE_ADMIN]);
@@ -376,6 +376,8 @@ check("staff create: inactive admin can't finish setting up an account", !!r.err
 check("staff create: account unchanged after all refused attempts", (await one(`select is_active from public.profiles where id=$1`, [NEW1])).is_active === false);
 r = await as(U.admin, `update public.profiles set role='telecaller', is_active=true, full_name='New Staff' where id=$1 returning role, is_active`, [NEW1]);
 check("staff create: active admin sets role + activates", r.rows?.[0]?.role === "telecaller" && r.rows?.[0]?.is_active === true, r.error);
+r = await as(U.tele, `update public.profiles set role='telecaller', is_active=true where id=$1 returning role, is_active`, [NEW2]);
+check("staff create: active telecaller sets role + activates, like an admin", r.rows?.[0]?.role === "telecaller" && r.rows?.[0]?.is_active === true, r.error);
 r = await as(U.admin, `update public.profiles set role='supervisor', is_active=false where id=$1 returning role, is_active`, [NEW2]);
 check("staff create: admin can create an inactive supervisor", r.rows?.[0]?.role === "supervisor" && r.rows?.[0]?.is_active === false, r.error);
 const logged = await sys(`select action, actor_id from public.activity_log where entity_type='profile' and entity_id=$1`, [NEW1]);
@@ -387,11 +389,57 @@ check(
 r = await as(NEW1, `select count(*)::int n from public.customers`);
 check("staff create: new telecaller can read customers", !r.error && r.rows?.[0]?.n > 0, r.error ?? r.rows?.[0]?.n);
 r = await as(NEW1, `select count(*)::int n from public.activity_log where entity_type='profile'`);
-check("staff create: new telecaller can't read user-admin log", r.rows?.[0]?.n === 0, r.error);
+check("staff create: new telecaller reads the staff-account log", r.rows?.[0]?.n > 0, r.error);
 r = await as(NEW2, `select count(*)::int n from public.payments`);
 check("staff create: inactive new supervisor sees no payments", r.rows?.[0]?.n === 0, r.error);
 r = await as(NEW1, `update public.profiles set role='admin' where id=$1`, [NEW1]);
 check("staff create: new telecaller can't promote self", !!r.error, r.error);
+
+// ── Telecallers: admin-level access, but admin accounts stay admin-only ──
+// (migration 20261106000000_telecaller_admin_access)
+const zeroOrError = (r) => !!r.error || r.rows.length === 0;
+r = await as(U.tele, `update public.profiles set role='admin' where id=$1 returning id`, [NEW2]);
+check("tele-admin: telecaller can't make anyone an admin", zeroOrError(r), r.error ?? "0 rows");
+r = await as(U.tele, `update public.profiles set role='telecaller' where id=$1 returning id`, [U.admin]);
+check("tele-admin: telecaller can't demote an admin", zeroOrError(r), r.error ?? "0 rows");
+r = await as(U.tele, `update public.profiles set is_active=false where id=$1 returning id`, [U.admin]);
+check("tele-admin: telecaller can't deactivate an admin", zeroOrError(r), r.error ?? "0 rows");
+r = await as(U.tele, `update public.profiles set full_name='Changed' where id=$1 returning id`, [U.admin]);
+check("tele-admin: telecaller can't edit an admin's account", zeroOrError(r), r.error ?? "0 rows");
+r = await as(U.tele, `update public.profiles set is_active=true where id=$1 returning id`, [FAKE_ADMIN]);
+check("tele-admin: telecaller can't reactivate an inactive admin", zeroOrError(r), r.error ?? "0 rows");
+r = await as(U.tele, `delete from public.profiles where id=$1 returning id`, [U.admin]);
+check("tele-admin: telecaller can't delete an admin's profile", zeroOrError(r), r.error ?? "0 rows");
+r = await as(U.tele, `insert into public.profiles (id, email, role, is_active) values (gen_random_uuid(), 'x@test.local', 'admin', true)`);
+check("tele-admin: telecaller can't add an admin profile", !!r.error, r.error);
+r = await as(U.tele, `update public.profiles set is_active=false where id=$1 returning id`, [U.tele]);
+check("tele-admin: telecaller can't change their own access", !!r.error, r.error);
+r = await as(U.tele, `update public.profiles set role='supervisor' where id=$1 returning id`, [U.tele]);
+check("tele-admin: telecaller can't change their own role", !!r.error, r.error);
+check(
+  "tele-admin: admin accounts unchanged after all refused attempts",
+  (await sys(`select id from public.profiles where role='admin' and is_active`)).map((x) => x.id).join() === U.admin &&
+    (await one(`select is_active from public.profiles where id=$1`, [FAKE_ADMIN])).is_active === false,
+);
+r = await as(U.tele, `update public.profiles set is_active=false where id=$1 returning is_active`, [NEW1]);
+check("tele-admin: telecaller deactivates another telecaller", r.rows?.[0]?.is_active === false, r.error);
+r = await as(U.tele, `update public.profiles set role='supervisor', is_active=true where id=$1 returning role, is_active`, [NEW1]);
+check("tele-admin: telecaller changes a non-admin's role and reactivates", r.rows?.[0]?.role === "supervisor" && r.rows?.[0]?.is_active === true, r.error);
+await sys(`update public.profiles set role='telecaller' where id=$1`, [NEW1]);
+r = await as(U.tele, `insert into public.equipment_types (name) values ('Tele test type') returning id`);
+check("tele-admin: telecaller adds an equipment type", !!r.rows?.[0]?.id, r.error);
+const teleType = r.rows?.[0]?.id;
+r = await as(U.tele, `update public.equipment_types set name='Tele test type 2' where id=$1 returning id`, [teleType]);
+check("tele-admin: telecaller edits an equipment type", r.rows?.length === 1, r.error);
+r = await as(U.sup, `insert into public.equipment_types (name) values ('Sup test type')`);
+check("tele-admin: supervisor still can't add equipment types", !!r.error, r.error);
+r = await as(U.tele, `delete from public.equipment_types where id=$1 returning id`, [teleType]);
+check("tele-admin: telecaller deletes an equipment type", r.rows?.length === 1, r.error);
+const spare = await one(`insert into public.customers (name, phone) values ('Delete Me', '9000000099') returning id`);
+r = await as(U.sup, `delete from public.customers where id=$1 returning id`, [spare.id]);
+check("tele-admin: supervisor still can't delete customers", zeroOrError(r), r.error ?? "0 rows");
+r = await as(U.tele, `delete from public.customers where id=$1 returning id`, [spare.id]);
+check("tele-admin: telecaller deletes a customer, like an admin", r.rows?.length === 1, r.error);
 
 // ── Never zero active admins (migration 20261014000000_keep_one_active_admin) ──
 // Run last: it promotes and demotes admins, then restores the starting state.
@@ -641,8 +689,10 @@ r = await as(U.admin, `update public.company_settings set payment_qr_path = '../
 check("payments: the QR path must point inside payment-qr/", /company_settings_payment_qr_path/.test(r.error ?? ""), r.error);
 r = await as(U.admin, `update public.company_settings set payment_qr_path = 'payment-qr/abc.jpg' returning payment_qr_path`);
 check("payments: admin saves the QR image path", r.rows?.[0]?.payment_qr_path === "payment-qr/abc.jpg", r.error);
-r = await as(U.tele, `update public.company_settings set upi_id = 'someone@bank' returning id`);
-check("payments: telecaller can't change the UPI ID", !r.error && r.rows.length === 0, r.error ?? "0 rows");
+r = await as(U.tele, `update public.company_settings set upi_id = 'someone@bank' returning upi_id`);
+check("payments: telecaller can change the UPI ID, like an admin", r.rows?.[0]?.upi_id === "someone@bank", r.error);
+r = await as(U.sup, `update public.company_settings set upi_id = 'other@bank' returning id`);
+check("payments: supervisor can't change the UPI ID", !!r.error || r.rows.length === 0, r.error ?? "0 rows");
 
 const assets = await one(`select public, file_size_limit, allowed_mime_types from storage.buckets where id = 'business-assets'`);
 check("business-assets: private, images only, 2 MB", assets?.public === false && Number(assets?.file_size_limit) === 2097152 && JSON.stringify(assets?.allowed_mime_types) === JSON.stringify(["image/png", "image/jpeg", "image/webp"]), JSON.stringify(assets));
@@ -650,10 +700,14 @@ r = await as(U.admin, `insert into storage.objects (bucket_id, name) values ('bu
 check("business-assets: admin can upload the QR image", r.rows?.[0]?.name === "payment-qr/admin.jpg", r.error);
 r = await as(U.admin, `insert into storage.objects (bucket_id, name) values ('business-assets', 'elsewhere/x.jpg')`);
 check("business-assets: uploads only go to payment-qr/", !!r.error, r.error);
-r = await as(U.tele, `insert into storage.objects (bucket_id, name) values ('business-assets', 'payment-qr/tele.jpg')`);
-check("business-assets: telecaller can't upload", !!r.error, r.error);
+r = await as(U.tele, `insert into storage.objects (bucket_id, name) values ('business-assets', 'payment-qr/tele.jpg') returning name`);
+check("business-assets: telecaller can upload the QR image, like an admin", r.rows?.[0]?.name === "payment-qr/tele.jpg", r.error);
+r = await as(U.tele, `insert into storage.objects (bucket_id, name) values ('business-assets', 'elsewhere/t.jpg')`);
+check("business-assets: telecaller uploads only go to payment-qr/", !!r.error, r.error);
+r = await as(U.sup, `insert into storage.objects (bucket_id, name) values ('business-assets', 'payment-qr/sup.jpg')`);
+check("business-assets: supervisor can't upload", !!r.error, r.error);
 r = await as(U.tele, `select count(*)::int n from storage.objects where bucket_id = 'business-assets'`);
-check("business-assets: telecaller can read the QR image", r.rows?.[0]?.n === 1, r.error);
+check("business-assets: telecaller can read the QR images", r.rows?.[0]?.n === 2, r.error);
 r = await as(U.sup, `select count(*)::int n from storage.objects where bucket_id = 'business-assets'`);
 check("business-assets: supervisor can't see it", r.rows?.[0]?.n === 0, r.error);
 r = await as(null, `select count(*)::int n from storage.objects where bucket_id = 'business-assets'`);

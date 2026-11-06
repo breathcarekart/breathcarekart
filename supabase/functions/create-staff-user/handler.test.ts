@@ -60,10 +60,29 @@ test("invalid or expired token → 401", async () => {
   assert.equal(calls.created.length, 0);
 });
 
-test("telecaller, supervisor and missing profile → 403, nothing created", async () => {
+test("active telecaller can create staff accounts, like an admin", async () => {
+  const { run, calls } = setup({
+    callerProfile: async () => ({ role: "telecaller", is_active: true }),
+  });
+  const r = await run();
+  assert.equal(r.status, 201);
+  assert.equal(calls.created.length, 1);
+});
+
+test("telecaller still can't create an admin account", async () => {
+  const { run, calls } = setup({
+    callerProfile: async () => ({ role: "telecaller", is_active: true }),
+  });
+  const r = await run({ body: { ...valid, role: "admin" } });
+  assert.equal(r.status, 400);
+  assert.equal(errorCode(r), "role_not_allowed");
+  assert.equal(calls.created.length, 0);
+});
+
+test("supervisor, inactive telecaller and missing profile → 403, nothing created", async () => {
   for (const profile of [
-    { role: "telecaller", is_active: true },
     { role: "supervisor", is_active: true },
+    { role: "telecaller", is_active: false },
     null,
   ]) {
     const { run, calls } = setup({ callerProfile: async () => profile });

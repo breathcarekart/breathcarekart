@@ -47,7 +47,7 @@ const staffRoles: StaffRole[] = ["telecaller", "supervisor"];
 
 /**
  * Creates a staff login from the app. The account is made by a secure server
- * function that checks the caller is an admin; no admin key is used here.
+ * function that checks the caller is an admin or telecaller; no admin key is used here.
  */
 export function AddStaffDialog({
   open,

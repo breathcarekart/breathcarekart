@@ -32,7 +32,16 @@ import { queryKeys } from "@/lib/db/query-keys";
 import type { Profile } from "@/lib/db/types";
 import { formatDate, initials } from "@/lib/format";
 import { notifyError, notifySuccess } from "@/lib/notify";
-import { roleLabel, roleSummaries, roles, toRole, useCurrentUser, type Role } from "@/lib/roles";
+import {
+  assignableRoles,
+  canManageUser,
+  roleLabel,
+  roleSummaries,
+  roles,
+  toRole,
+  useCurrentUser,
+  type Role,
+} from "@/lib/roles";
 
 export const Route = createFileRoute("/_app/users")({
   head: () => ({
@@ -49,7 +58,7 @@ export const Route = createFileRoute("/_app/users")({
 
 function UsersPage() {
   const queryClient = useQueryClient();
-  const { profile: me } = useCurrentUser();
+  const { profile: me, role: myRole } = useCurrentUser();
   const query = useQuery(profileQueries.list());
   const [adding, setAdding] = useState(false);
 
@@ -124,6 +133,8 @@ function UsersPage() {
                     key={u.id}
                     user={u}
                     isMe={u.id === me.id}
+                    canManage={canManageUser(myRole, toRole(u.role))}
+                    roleChoices={assignableRoles(myRole)}
                     busy={update.isPending}
                     onChange={(patch) => update.mutate({ id: u.id, patch })}
                   />
@@ -142,11 +153,16 @@ function UsersPage() {
 function UserRow({
   user,
   isMe,
+  canManage,
+  roleChoices,
   busy,
   onChange,
 }: {
   user: Profile;
   isMe: boolean;
+  /** False for admin accounts when a telecaller is signed in. */
+  canManage: boolean;
+  roleChoices: Role[];
   busy: boolean;
   onChange: (patch: { role?: Role; is_active?: boolean }) => void;
 }) {
@@ -187,7 +203,7 @@ function UserRow({
         />
       </TableCell>
       <TableCell className="text-right">
-        {isMe ? null : (
+        {isMe || !canManage ? null : (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
@@ -204,7 +220,7 @@ function UserRow({
               <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
                 Change role
               </DropdownMenuLabel>
-              {roles.map((r) => (
+              {roleChoices.map((r) => (
                 <DropdownMenuItem
                   key={r}
                   disabled={r === role}

@@ -13,7 +13,7 @@
     "typecheck": "tsc --noEmit",
     "db:types": "npx --yes supabase gen types typescript --linked --schema public > src/lib/database.types.ts",
     "test:db": "node supabase/tests/workflows.test.mjs",
-    "test:unit": "node --test src/lib/payments.test.ts src/lib/delivery.test.ts src/lib/auth-errors.test.ts src/lib/gst.test.ts src/lib/whatsapp-ui.test.ts supabase/functions/create-staff-user/handler.test.ts supabase/functions/send-invoice-whatsapp/whatsapp.test.ts supabase/functions/send-invoice-whatsapp/handler.test.ts supabase/functions/_shared/invoice-pdf.test.ts"
+    "test:unit": "node --test src/lib/roles.test.ts src/lib/payments.test.ts src/lib/delivery.test.ts src/lib/auth-errors.test.ts src/lib/gst.test.ts src/lib/whatsapp-ui.test.ts supabase/functions/create-staff-user/handler.test.ts supabase/functions/send-invoice-whatsapp/whatsapp.test.ts supabase/functions/send-invoice-whatsapp/handler.test.ts supabase/functions/_shared/invoice-pdf.test.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

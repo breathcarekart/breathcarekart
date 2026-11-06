@@ -20,7 +20,7 @@ export async function fetchProfiles() {
 }
 
 /**
- * Role/activation changes are admin-only (enforced by RLS + trigger);
+ * Role/activation changes: admins, and telecallers for non-admin accounts (RLS + trigger);
  * anyone may update their own name and phone.
  */
 export async function updateProfile(

@@ -5,13 +5,17 @@
 //
 // Security model
 //  - The caller must send their own session token. We check it, then check in the
-//    database (as that caller, under RLS) that they are an active admin.
+//    database (as that caller, under RLS) that they are an active admin or telecaller
+//    (telecallers have admin-level access apart from Reports).
 //  - The only operation that needs the service-role key is creating the sign-in
-//    account itself. The profile role and activation are then set AS THE ADMIN, so
+//    account itself. The profile role and activation are then set AS THE CALLER, so
 //    the normal RLS policies, the role-guard trigger and the activity log all apply.
 //  - Admin accounts can't be created here.
 
 export const STAFF_ROLES = ["telecaller", "supervisor"] as const;
+
+/** Roles that may create staff accounts. */
+const MANAGER_ROLES = new Set(["admin", "telecaller"]);
 export type StaffRole = (typeof STAFF_ROLES)[number];
 
 export const MIN_PASSWORD_LENGTH = 8;
@@ -126,10 +130,11 @@ export async function handleCreateStaffUser(
   const caller = await deps.authenticate(token).catch(() => null);
   if (!caller) return fail(401, "unauthenticated", "Your session has expired. Sign in again.");
 
-  // 2. Are they an active admin? Checked in the database as the caller, not from the request.
+  // 2. Are they an active admin or telecaller? Checked in the database as the caller,
+  //    not from the request.
   const profile = await deps.callerProfile(caller.id).catch(() => null);
-  if (!profile || profile.role !== "admin" || !profile.is_active) {
-    return fail(403, "forbidden", "Only active admins can create staff accounts.");
+  if (!profile || !profile.is_active || !MANAGER_ROLES.has(profile.role ?? "")) {
+    return fail(403, "forbidden", "Only active admins and telecallers can create staff accounts.");
   }
 
   // 3. Is the request valid?

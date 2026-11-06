@@ -23,6 +23,7 @@ export const toRole = (value: string | null | undefined): Role =>
   value === "admin" || value === "telecaller" ? value : "supervisor";
 
 const ALL: Role[] = ["admin", "telecaller", "supervisor"];
+/** Admins and telecallers: telecallers have admin-level access except Reports. */
 const OFFICE: Role[] = ["admin", "telecaller"];
 const ADMIN: Role[] = ["admin"];
 
@@ -39,10 +40,10 @@ const routeAccess: [prefix: string, roles: Role[]][] = [
   ["/sales", OFFICE],
   ["/invoices", OFFICE],
   ["/payments", OFFICE],
-  ["/reports", OFFICE],
-  ["/users", ADMIN],
-  ["/activity", ADMIN],
-  ["/settings", ADMIN],
+  ["/reports", ADMIN],
+  ["/users", OFFICE],
+  ["/activity", OFFICE],
+  ["/settings", OFFICE],
 ];
 
 export function canAccess(role: Role, pathname: string) {
@@ -52,12 +53,25 @@ export function canAccess(role: Role, pathname: string) {
   return match ? match[1].includes(role) : true;
 }
 
+/** Admin-level access (everything but Reports for telecallers). */
 export const isOfficeRole = (role: Role) => role === "admin" || role === "telecaller";
+
+/**
+ * Staff accounts a signed-in user may change. Admin accounts stay admin-only, so a
+ * telecaller can't make themselves (or anyone) an admin and reach Reports that way.
+ * The database enforces the same rule (profiles policies and role-guard trigger).
+ */
+export const canManageUser = (viewer: Role, target: Role) =>
+  viewer === "admin" || (isOfficeRole(viewer) && target !== "admin");
+
+/** Roles a signed-in user may give to an account they can manage. */
+export const assignableRoles = (viewer: Role): Role[] =>
+  viewer === "admin" ? roles : roles.filter((r) => r !== "admin");
 
 /** Human-readable access summary per role, for the Users & Roles screen. */
 export const roleSummaries: Record<Role, string> = {
   admin: "Full access, including users & roles, activity log and settings.",
-  telecaller: "Customers, inventory, rentals, sales, invoices, payments and reports.",
+  telecaller: "Same as admin, except reports. Can't change admin accounts.",
   supervisor: "Rentals assigned to them, delivery status and delivery photos.",
 };
 

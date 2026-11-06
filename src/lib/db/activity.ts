@@ -4,7 +4,7 @@ import { queryKeys } from "@/lib/db/query-keys";
 
 const activitySelect = "*, actor:profiles(id, full_name, role)";
 
-/** Most recent audit entries with the acting user (RLS: admin all, telecaller non-user entries). */
+/** Most recent audit entries with the acting user (RLS: admins and telecallers). */
 export async function fetchActivity(limit = 200) {
   return unwrap(
     await db()

@@ -30,7 +30,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { DataError } from "@/lib/db/errors";
 import { queryKeys } from "@/lib/db/query-keys";
 import { notifySuccess } from "@/lib/notify";
-import { useCurrentUser } from "@/lib/roles";
+import { isOfficeRole, useCurrentUser } from "@/lib/roles";
 import { cn } from "@/lib/utils";
 import {
   isWhatsAppConfigured,
@@ -195,7 +195,7 @@ export function WhatsAppSendDialog({
       <DialogContent className="max-h-[92vh] overflow-y-auto rounded-2xl sm:max-w-lg">
         <WhatsAppSendPanel
           template={template}
-          isAdmin={role === "admin"}
+          isAdmin={isOfficeRole(role)}
           configured={configured}
           blockedReason={blockedReason}
           customerName={preview.data?.recipient.name ?? customerName}
@@ -236,7 +236,7 @@ export function WhatsAppSendDialog({
 
 export type WhatsAppSendPanelProps = {
   template: TemplateName;
-  /** Admins also get the setup warning and the internal testing options. */
+  /** Admin-level access (admins and telecallers): also gets the setup warning and the internal testing options. */
   isAdmin: boolean;
   configured: boolean;
   blockedReason: string | null;
@@ -403,7 +403,7 @@ export function WhatsAppSendPanel(p: WhatsAppSendPanelProps) {
           {p.isAdmin && (
             <details className="rounded-xl border px-3 py-2" open={internal}>
               <summary className="cursor-pointer text-sm font-medium text-muted-foreground">
-                Internal testing (admins only)
+                Internal testing (admins and telecallers only)
               </summary>
               <fieldset className="mt-3 space-y-2" disabled={p.pending}>
                 <legend className="sr-only">Internal testing options</legend>

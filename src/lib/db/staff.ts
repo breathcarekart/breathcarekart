@@ -6,7 +6,7 @@ import {
 import { db } from "@/lib/db/client";
 import { DataError, type DataErrorKind } from "@/lib/db/errors";
 
-/** Roles an admin can give to a new account here. Admin accounts aren't created from the app. */
+/** Roles an admin or telecaller can give to a new account here. Admin accounts aren't created from the app. */
 export type StaffRole = "telecaller" | "supervisor";
 
 export type CreateStaffInput = {
@@ -36,7 +36,7 @@ const kindByCode: Record<string, DataErrorKind> = {
 
 /**
  * Creates a staff account through the create-staff-user Edge Function. The
- * function checks that the caller is an active admin; the browser never sees a
+ * function checks that the caller is an active admin or telecaller; the browser never sees a
  * service-role key.
  */
 export async function createStaffUser(input: CreateStaffInput): Promise<CreatedStaff> {

@@ -39,7 +39,7 @@ import { formatDate, formatDateTime, inr } from "@/lib/format";
 import { buildInvoiceDocument, missingCompanyFields } from "@/lib/invoice-document-data";
 import { downloadInvoicePdf } from "@/lib/invoice-pdf";
 import { notifyError, notifySuccess } from "@/lib/notify";
-import { isOfficeRole, roleLabel, toRole, useCurrentUser } from "@/lib/roles";
+import { canAccess, isOfficeRole, roleLabel, toRole, useCurrentUser } from "@/lib/roles";
 import {
   outstandingOf,
   paymentMethodLabels,
@@ -180,7 +180,7 @@ function InvoiceDetails({
               ? " — the PDF shows “Invoice” instead of “Tax invoice” until a GSTIN is added."
               : "."}
           </span>
-          {role === "admin" && (
+          {canAccess(role, "/settings") && (
             <Button asChild size="sm" variant="outline" className="rounded-lg bg-background">
               <Link to="/settings">Open settings</Link>
             </Button>

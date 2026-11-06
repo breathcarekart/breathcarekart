@@ -6,6 +6,7 @@ import {
   AISENSY_ENDPOINT,
   buildCampaignPayload,
   buildTemplateParams,
+  describedInvoiceItems,
   describeItems,
   formatTemplateAmount,
   formatTemplateDate,
@@ -125,6 +126,35 @@ test("items: joined with commas, first three, then +N more", () => {
     [1, 2, 3, 4].map((i) => ({ description: "W".repeat(90), created_at: at(i) })),
   );
   assert.ok(long.length <= 200 && long.endsWith(" +1 more"), long);
+});
+
+test("the delivery charge is left out of the message's description, but the total keeps it", () => {
+  const r = buildTemplateParams({
+    customerName: "vennela",
+    invoiceNumber: "BCK/2026/0003",
+    invoiceDate: "2026-11-06",
+    items: [
+      { description: "Cardiac Monitor · Philips (OC_%L)", created_at: "2026-11-06T07:00:00Z" },
+      { description: "Delivery charge", created_at: "2026-11-06T07:00:01Z" },
+    ],
+    grandTotal: "63210.00",
+  });
+  assert.ok(r.ok);
+  assert.equal(r.params[3], "Cardiac Monitor · Philips (OC_%L)");
+  assert.equal(r.params[4], "63,210.00");
+  // Any spelling/spacing of the delivery line; other items are untouched.
+  const items = [
+    { description: "BiPAP Machine", created_at: "a" },
+    { description: "  delivery CHARGE ", created_at: "b" },
+    { description: "Oxygen Concentrator delivery kit", created_at: "c" },
+  ];
+  assert.equal(
+    describeItems(describedInvoiceItems(items)),
+    "BiPAP Machine, Oxygen Concentrator delivery kit",
+  );
+  // An invoice with only a delivery charge still gets a description (never a blank value).
+  const only = [{ description: "Delivery charge", created_at: "a" }];
+  assert.equal(describeItems(describedInvoiceItems(only)), "Delivery charge");
 });
 
 test("template parameters follow the single mapping config, in placeholder order", () => {

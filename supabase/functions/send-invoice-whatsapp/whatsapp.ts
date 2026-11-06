@@ -204,13 +204,27 @@ export function orderTemplateParams(
   return { ok: true, params: keys.map((key) => values[key]!), values };
 }
 
+/**
+ * The invoice line create_invoice adds for delivery (20261008000400). It stays on the PDF
+ * and in the total, but isn't equipment, so it isn't named in the message's description.
+ */
+export const isDeliveryChargeLine = (item: { description: string }) =>
+  item.description.trim().toLowerCase() === "delivery charge";
+
+/** The lines named in the message: the equipment, without the delivery charge. */
+export function describedInvoiceItems<T extends { description: string }>(items: T[]): T[] {
+  const equipment = items.filter((it) => !isDeliveryChargeLine(it));
+  // An invoice with nothing but a delivery charge still gets a description.
+  return equipment.length > 0 ? equipment : items;
+}
+
 /** invoice_send parameters from trusted database values. */
 export const buildTemplateParams = (input: TemplateInput): ParamsResult =>
   orderTemplateParams("invoice_send", () => ({
     customer_name: sanitizeTemplateValue(input.customerName, 100),
     invoice_number: sanitizeTemplateValue(input.invoiceNumber, 60),
     invoice_date: formatTemplateDate(input.invoiceDate),
-    item_description: describeItems(input.items),
+    item_description: describeItems(describedInvoiceItems(input.items)),
     grand_total: formatTemplateAmount(input.grandTotal),
   }));
 

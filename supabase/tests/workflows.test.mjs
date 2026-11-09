@@ -713,5 +713,65 @@ check("business-assets: supervisor can't see it", r.rows?.[0]?.n === 0, r.error)
 r = await as(null, `select count(*)::int n from storage.objects where bucket_id = 'business-assets'`);
 check("business-assets: signed-out users can't see it", !!r.error || r.rows?.[0]?.n === 0, r.error ?? "0 rows");
 
+// ── Delete invoice (migration 20261109000000_delete_invoice) ──
+{
+  const newInvoice = async (code) => {
+    const unit = (await one(`insert into public.equipment_units (equipment_type_id, unit_code, monthly_rate) values ($1, $2, 10000) returning id`, [bipap, code])).id;
+    const res = await as(U.admin, `select public.create_invoice($1::jsonb) as res`, [rentalPayload(unit, { supervisor_id: null })]);
+    return res.rows[0].res;
+  };
+  const exists = async (table, id) => (await one(`select count(*)::int n from public.${table} where id = $1`, [id])).n === 1;
+  const waRow = (invoice, mode, status) =>
+    sys(`insert into public.whatsapp_messages (invoice_id, customer_id, campaign_name, mode, status, destination, requested_by) values ($1, $2, 'invoice_send', $3, $4, '+919000000001', $5)`, [invoice, custId, mode, status, U.admin]);
+  const paymentsBefore = (await one(`select count(*)::int n, coalesce(sum(amount), 0)::numeric s from public.payments`));
+
+  // A: no payments, WhatsApp history (a live send and an internal test).
+  const a = await newInvoice("DEL-A");
+  await waRow(a.invoice_id, "live", "sent");
+  await waRow(a.invoice_id, "test", "sent");
+  r = await as(U.sup, `select public.delete_invoice($1)`, [a.invoice_id]);
+  check("delete invoice: supervisor refused", r.code === "42501", r.error);
+  r = await as(null, `select public.delete_invoice($1)`, [a.invoice_id]);
+  check("delete invoice: signed-out user refused", !!r.error, r.error);
+  r = await as(U.inactive, `select public.delete_invoice($1)`, [a.invoice_id]);
+  check("delete invoice: inactive user refused", r.code === "42501", r.error);
+  check("delete invoice: still there after refused attempts", await exists("invoices", a.invoice_id));
+  r = await as(U.tele, `select public.delete_invoice($1) as res`, [a.invoice_id]);
+  check("delete invoice: telecaller deletes it", r.rows?.[0]?.res?.invoice_number === a.invoice_number && r.rows?.[0]?.res?.whatsapp_messages_removed === 2, r.error ?? JSON.stringify(r.rows?.[0]?.res));
+  check("delete invoice: invoice gone", !(await exists("invoices", a.invoice_id)));
+  check("delete invoice: its line items gone", (await one(`select count(*)::int n from public.invoice_items where invoice_id = $1`, [a.invoice_id])).n === 0);
+  check("delete invoice: its WhatsApp log gone", (await one(`select count(*)::int n from public.whatsapp_messages where invoice_id = $1`, [a.invoice_id])).n === 0);
+  check("delete invoice: rental kept", await exists("rentals", a.rental_id));
+  check("delete invoice: customer kept", await exists("customers", custId));
+  const logged = await one(`select actor_id, metadata from public.activity_log where entity_type = 'invoice' and entity_id = $1 and action = 'deleted'`, [a.invoice_id]);
+  check("delete invoice: logged with who and what", logged?.actor_id === U.tele && logged?.metadata?.invoice_number === a.invoice_number && logged?.metadata?.whatsapp_messages_removed === 2, JSON.stringify(logged));
+  r = await as(U.tele, `select public.delete_invoice($1)`, [a.invoice_id]);
+  check("delete invoice: deleting twice is refused", /not found/i.test(r.error ?? ""), r.error);
+
+  // B: a payment is recorded → refused, nothing changes.
+  const b = await newInvoice("DEL-B");
+  r = await as(U.admin, `select public.record_payment($1, 100, 'upi')`, [b.invoice_id]);
+  check("delete invoice: (setup) payment recorded", !r.error, r.error);
+  const paymentsWithB = await one(`select count(*)::int n from public.payments`);
+  r = await as(U.admin, `select public.delete_invoice($1)`, [b.invoice_id]);
+  check("delete invoice: refused when a payment is recorded", r.code === "P0001" && /1 payment recorded/.test(r.error ?? ""), r.error);
+  check("delete invoice: invoice with payment kept", await exists("invoices", b.invoice_id));
+  check("delete invoice: payment kept", (await one(`select count(*)::int n from public.payments`)).n === paymentsWithB.n);
+
+  // C: a WhatsApp send in progress → refused; once finished, an admin can delete.
+  const c = await newInvoice("DEL-C");
+  await waRow(c.invoice_id, "live", "sending");
+  r = await as(U.admin, `select public.delete_invoice($1)`, [c.invoice_id]);
+  check("delete invoice: refused while a WhatsApp send is in progress", /being sent right now/.test(r.error ?? ""), r.error);
+  await sys(`update public.whatsapp_messages set status = 'sent' where invoice_id = $1`, [c.invoice_id]);
+  r = await as(U.admin, `select public.delete_invoice($1) as res`, [c.invoice_id]);
+  check("delete invoice: admin deletes it", r.rows?.[0]?.res?.invoice_number === c.invoice_number && !(await exists("invoices", c.invoice_id)), r.error);
+
+  const paymentsAfter = await one(`select count(*)::int n, coalesce(sum(amount), 0)::numeric s from public.payments`);
+  check("delete invoice: no payment deleted anywhere", paymentsAfter.n === paymentsBefore.n + 1 && Number(paymentsAfter.s) === Number(paymentsBefore.s) + 100, JSON.stringify({ paymentsBefore, paymentsAfter }));
+  r = await as(U.tele, `select has_function_privilege('anon', 'public.delete_invoice(uuid)', 'execute') as anon_can`);
+  check("delete invoice: anonymous API role can't call it", r.rows?.[0]?.anon_can === false, r.error);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

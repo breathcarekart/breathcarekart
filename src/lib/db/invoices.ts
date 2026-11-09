@@ -79,6 +79,21 @@ export async function createInvoice(input: CreateInvoiceInput): Promise<CreateIn
   return result;
 }
 
+export type DeleteInvoiceResult = { invoice_number: string; whatsapp_messages_removed: number };
+
+/**
+ * Deletes an invoice and its line items (and its WhatsApp log) in one transaction.
+ * The database refuses if any payment is recorded against it, and never touches the
+ * customer, rental, sale or payments. Admins and telecallers only.
+ */
+export async function deleteInvoice(id: string): Promise<DeleteInvoiceResult> {
+  const { data, error } = await db().rpc("delete_invoice", { p_invoice_id: id });
+  if (error) throw toDataError(error);
+  const result = data as DeleteInvoiceResult | null;
+  if (!result?.invoice_number) throw new DataError("unknown", "The invoice could not be deleted.");
+  return result;
+}
+
 export const invoiceQueries = {
   list: () => queryOptions({ queryKey: queryKeys.invoices.list(), queryFn: fetchInvoices }),
   detail: (id: string) =>

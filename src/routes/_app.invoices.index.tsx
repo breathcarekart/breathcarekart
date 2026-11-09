@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { AlertCircle, CircleDollarSign, Download, FileText, Plus, Wallet } from "lucide-react";
 import { useMemo, useState } from "react";
+import { InvoiceRowActions } from "@/components/invoices/invoice-row-actions";
 import { TransactionBadge } from "@/components/shared/badges";
 import { EmptyState } from "@/components/shared/empty-state";
 import {
@@ -221,6 +222,9 @@ function InvoiceListPage() {
                     <TableHead className="hidden xl:table-cell">Created by</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">Total</TableHead>
+                    <TableHead className="w-12 text-right">
+                      <span className="sr-only">Actions</span>
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -254,6 +258,9 @@ function InvoiceListPage() {
                         </TableCell>
                         <TableCell className="text-right text-sm font-medium">
                           {inr(i.grand_total)}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <InvoiceRowActions invoice={i} />
                         </TableCell>
                       </TableRow>
                     );

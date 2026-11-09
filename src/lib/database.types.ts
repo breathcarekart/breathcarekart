@@ -957,6 +957,7 @@ export type Database = {
       can_see_rental: { Args: { p_rental_id: string }; Returns: boolean }
       create_invoice: { Args: { p: Json }; Returns: Json }
       current_app_role: { Args: Record<PropertyKey, never>; Returns: string }
+      delete_invoice: { Args: { p_invoice_id: string }; Returns: Json }
       delivery_photo_rental_id: { Args: { p_name: string }; Returns: string }
       is_admin: { Args: Record<PropertyKey, never>; Returns: boolean }
       is_office: { Args: Record<PropertyKey, never>; Returns: boolean }
